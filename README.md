@@ -68,9 +68,10 @@ The precise model boundaries and current limitations are in the
 - [Importing trained networks](docs/imported_networks.md)
 - [Standalone compiled-graph images](docs/compiled_graph_images.md)
 - [MNIST reward-modulated STDP example](examples/mnist_modulated_stdp.py)
-- [Official SLAYER deployment adapter](docs/official_slayer_deployment.md)
+- [Official SLAYER deployment adapter](docs/official_slayer_deployment.md) and
+  [AlexNet MNIST paper example](docs/official_slayer_alexnet_mnist.md)
 
-The MNIST example uses a signed, class-specific feedback signal after the
+The R-STDP example uses a signed, class-specific feedback signal after the
 decision window; it is an experiment in the learning API, not a claim of
 state-of-the-art classification performance.
 
