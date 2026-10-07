@@ -1,0 +1,1217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lacuna Network Visualizer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --panel-raised: #f8fafc;
+      --stage: #f7f9fb;
+      --text: #172033;
+      --muted: #667085;
+      --line: #d8dee8;
+      --line-strong: #b8c2d0;
+      --accent: #2563a6;
+      --accent-soft: #eaf2fb;
+      --positive: #49779a;
+      --negative: #b05d50;
+      --neutral: #8995a6;
+      --warning: #c9811b;
+      --success: #18794e;
+      --role-input: #245ea8;
+      --role-output: #18755b;
+      --series-1: #2563a6;
+      --series-2: #a65836;
+      --series-3: #18755b;
+      --series-4: #7255a3;
+      --series-5: #a34866;
+      --series-6: #536273;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; min-height: 100%; background: var(--bg); color: var(--text); }
+    button, input, select { font: inherit; }
+    button, select, input {
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    button {
+      min-height: 34px;
+      padding: 6px 11px;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--panel-raised); }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    button:disabled { opacity: 0.45; cursor: default; }
+    button.primary { background: var(--accent); color: #ffffff; border-color: var(--accent); font-weight: 500; }
+    button.primary:hover:not(:disabled) { background: #1f548d; border-color: #1f548d; }
+    button.danger.active { color: #ffffff; background: #a33c4d; border-color: #a33c4d; }
+    input, select { min-height: 34px; padding: 6px 8px; width: 100%; }
+    .app { height: 100vh; min-height: 480px; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 1px 3px rgba(23, 32, 51, 0.06);
+      z-index: 3;
+    }
+    .brand { display: flex; align-items: baseline; gap: 8px; margin-right: auto; min-width: 180px; }
+    .brand strong { font-size: 15px; font-weight: 500; }
+    .brand span { color: var(--muted); font-size: 12px; }
+    .control-group { display: flex; align-items: center; gap: 6px; }
+    .control-group select { width: auto; min-width: 82px; }
+    .time-readout { min-width: 116px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
+    .workspace { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
+    .stage {
+      position: relative;
+      min-height: 0;
+      overflow: hidden;
+      background-color: var(--stage);
+      background-image:
+        linear-gradient(rgba(137, 149, 166, 0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(137, 149, 166, 0.08) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    #networkCanvas { display: block; width: 100%; height: 100%; min-height: 0; touch-action: none; cursor: grab; }
+    #networkCanvas.dragging { cursor: grabbing; }
+    .stage-overlay { position: absolute; pointer-events: none; z-index: 2; }
+    .legend {
+      left: 12px; bottom: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 7px 9px; color: var(--muted); background: rgba(255, 255, 255, 0.94); border: 1px solid var(--line); border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(23, 32, 51, 0.07);
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+    .swatch { width: 22px; height: 3px; border-radius: 2px; }
+    .swatch.positive { background: var(--positive); }
+    .swatch.negative { background: var(--negative); }
+    .swatch.mixed { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .swatch.spike { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); }
+    .role-symbol { width: 22px; color: var(--role-input); font-style: normal; font-weight: 500; text-align: center; }
+    .role-symbol.output { color: var(--role-output); }
+    .activity {
+      top: 12px; left: 12px; padding: 7px 9px; color: var(--muted); background: rgba(255, 255, 255, 0.94);
+      border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(23, 32, 51, 0.07);
+      font-variant-numeric: tabular-nums;
+    }
+    .inspector { min-width: 0; overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 14px; }
+    .section { padding: 0 0 15px; margin: 0 0 15px; border-bottom: 1px solid var(--line); }
+    .section:last-child { border-bottom: 0; }
+    h2 { font-size: 13px; color: var(--text); margin: 0 0 10px; font-weight: 500; }
+    .selected-name { font-size: 18px; font-weight: 500; margin-bottom: 4px; overflow-wrap: anywhere; }
+    .selected-meta { color: var(--muted); line-height: 1.5; min-height: 42px; }
+    .plot-wrap { height: 180px; position: relative; transition: height 140ms ease; }
+    #stateCanvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+    .plot-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 24px; pointer-events: none; }
+    .plot-tooltip {
+      position: absolute; z-index: 2; pointer-events: none; padding: 4px 6px;
+      color: var(--text); background: var(--panel); border: 1px solid var(--line);
+      border-radius: 4px; box-shadow: 0 2px 7px rgba(23, 32, 51, 0.10);
+      font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    .field { display: grid; gap: 4px; min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    label { color: var(--muted); font-size: 12px; font-weight: 500; }
+    .input-kind { margin: 8px 0; color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
+    .input-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .input-actions button { flex: 1; }
+    .message { color: var(--muted); margin-top: 8px; min-height: 18px; line-height: 1.4; }
+    .message.error { color: var(--negative); }
+    .message.success { color: var(--success); }
+    .export-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .hint { color: var(--muted); line-height: 1.5; margin: 8px 0 0; }
+    .hidden { display: none !important; }
+    @media (max-width: 900px) {
+      .app { height: auto; min-height: 100vh; overflow: visible; }
+      .workspace { grid-template-columns: 1fr; }
+      .stage { min-height: 520px; }
+      #networkCanvas { min-height: 520px; }
+      .inspector { border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+    }
+    @media (max-width: 560px) {
+      .toolbar { align-items: stretch; }
+      .brand { width: 100%; }
+      .control-group { flex: 1; }
+      .control-group button { flex: 1; }
+      .time-readout { width: 100%; text-align: left; }
+      .field-grid, .export-actions { grid-template-columns: 1fr; }
+      .field.full { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="toolbar">
+      <div class="brand"><strong id="networkName">Lacuna</strong><span id="networkSize"></span></div>
+      <div class="control-group">
+        <button id="playButton" class="primary" type="button">Play</button>
+        <button id="stepButton" type="button">Step</button>
+        <button id="resetButton" type="button">Restart</button>
+      </div>
+      <div class="control-group">
+        <label for="speedSelect">Speed</label>
+        <select id="speedSelect">
+          <option value="1">1 unit/s</option>
+          <option value="5" selected>5 units/s</option>
+          <option value="20">20 units/s</option>
+          <option value="100">100 units/s</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <button id="layoutButton" type="button">Re-layout</button>
+        <button id="fitButton" type="button">Fit view</button>
+        <button id="closeButton" type="button">Close session</button>
+      </div>
+      <div class="time-readout" id="timeReadout">t = 0.000 / 0.000</div>
+    </header>
+
+    <main class="workspace">
+      <section class="stage" id="stage" aria-label="Interactive compiled network graph">
+        <canvas id="networkCanvas" aria-label="Network neurons, directed synapses, and traveling spikes"></canvas>
+        <div class="stage-overlay activity" id="activityReadout">0 spikes</div>
+        <div class="stage-overlay legend" aria-label="Connection legend">
+          <span class="legend-item"><i class="swatch positive"></i>excitatory</span>
+          <span class="legend-item"><i class="swatch negative"></i>inhibitory</span>
+          <span class="legend-item"><i class="swatch mixed"></i>mixed neuron</span>
+          <span class="legend-item"><i class="swatch spike"></i>spike</span>
+          <span class="legend-item"><i class="role-symbol">→●</i>input</span>
+          <span class="legend-item"><i class="role-symbol output">●→</i>output</span>
+        </div>
+      </section>
+
+      <aside class="inspector" aria-label="Neuron inspection and controls">
+        <section class="section">
+          <h2>Selected neuron</h2>
+          <div class="selected-name" id="selectedName">None</div>
+          <div class="selected-meta" id="selectedMeta">Click a neuron to begin exact-time state and spike tracking.</div>
+        </section>
+
+        <section class="section">
+          <h2>State variables and spike times</h2>
+          <div class="plot-wrap" id="plotWrap">
+            <canvas id="stateCanvas" aria-label="Selected neuron state variables and spike times over simulation time"></canvas>
+            <div class="plot-empty" id="plotEmpty">State and spike tracking begins when a neuron is selected.</div>
+            <div class="plot-tooltip hidden" id="plotTooltip"></div>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>Inject input</h2>
+          <div class="field">
+            <label for="portSelect">Input port → neuron</label>
+            <select id="portSelect"></select>
+          </div>
+          <div class="input-kind" id="inputKind">No input ports are defined on this network.</div>
+          <div class="field-grid" id="spikeFields">
+            <div class="field"><label for="spikeAmplitude">Amplitude</label><input id="spikeAmplitude" type="number" value="20" step="any"></div>
+            <div class="field"><label for="spikeCount">Spike count</label><input id="spikeCount" type="number" value="1" min="1" max="4096" step="1"></div>
+            <div class="field"><label for="spikeInterval">Interval</label><input id="spikeInterval" type="number" value="1" min="0" step="any"></div>
+            <div class="field"><label for="spikeOffset">Start offset</label><input id="spikeOffset" type="number" value="0" min="0" step="any"></div>
+          </div>
+          <div class="field-grid hidden" id="presentationFields">
+            <div class="field"><label for="presentationValue">Normalized value</label><input id="presentationValue" type="number" value="1" min="0" max="1" step="0.01"></div>
+            <div class="field"><label for="presentationDuration">Duration</label><input id="presentationDuration" type="number" value="10" min="0" step="any"></div>
+            <div class="field"><label for="presentationOffset">Start offset</label><input id="presentationOffset" type="number" value="0" min="0" step="any"></div>
+          </div>
+          <div class="field-grid hidden" id="driveFields">
+            <div class="field"><label for="driveValue">Drive value</label><input id="driveValue" type="number" value="25" step="any"></div>
+            <div class="field"><label for="driveDuration">Pulse duration (0 = hold)</label><input id="driveDuration" type="number" value="250" min="0" step="any"></div>
+            <div class="field"><label for="driveBaseline">Return value</label><input id="driveBaseline" type="number" value="0" step="any"></div>
+            <div class="field"><label for="driveOffset">Start offset</label><input id="driveOffset" type="number" value="0" min="0" step="any"></div>
+          </div>
+          <div class="input-actions"><button id="injectButton" class="primary" type="button">Inject</button></div>
+          <div class="message" id="inputMessage" aria-live="polite"></div>
+        </section>
+
+        <section class="section">
+          <h2>Capture</h2>
+          <div class="export-actions">
+            <button id="screenshotButton" type="button">Save screenshot</button>
+            <button id="recordButton" class="danger" type="button">Start recording</button>
+          </div>
+          <p class="hint">Screenshots and WebM recordings capture the animated network canvas at native resolution. Recording buffers evaluator steps and omits any remaining wait intervals.</p>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      "use strict";
+      const BASE = __LACUNA_BASE_PATH__;
+      const $ = (id) => document.getElementById(id);
+      const canvas = $("networkCanvas");
+      const ctx = canvas.getContext("2d");
+      const plotCanvas = $("stateCanvas");
+      const plotCtx = plotCanvas.getContext("2d");
+      const style = getComputedStyle(document.documentElement);
+      const colors = {
+        bg: style.getPropertyValue("--bg").trim(),
+        panel: style.getPropertyValue("--panel").trim(),
+        text: style.getPropertyValue("--text").trim(),
+        muted: style.getPropertyValue("--muted").trim(),
+        line: style.getPropertyValue("--line").trim(),
+        accent: style.getPropertyValue("--accent").trim(),
+        positive: style.getPropertyValue("--positive").trim(),
+        negative: style.getPropertyValue("--negative").trim(),
+        neutral: style.getPropertyValue("--neutral").trim(),
+        warning: style.getPropertyValue("--warning").trim(),
+        roleInput: style.getPropertyValue("--role-input").trim(),
+        roleOutput: style.getPropertyValue("--role-output").trim(),
+        series: [1, 2, 3, 4, 5, 6].map(i => style.getPropertyValue(`--series-${i}`).trim())
+      };
+
+      const state = {
+        graph: null,
+        nodes: [],
+        nodeById: new Map(),
+        edges: [],
+        outgoing: new Map(),
+        inputs: [],
+        selected: null,
+        playing: false,
+        waiting: false,
+        displayTime: 0,
+        serverFrontier: 0,
+        chunkStart: 0,
+        chunkEnd: 0,
+        duration: 0,
+        speed: 5,
+        totalSpikes: 0,
+        spikeEvents: [],
+        spikesByNode: new Map(),
+        particles: [],
+        series: new Map(),
+        selectedSince: 0,
+        plotGeometry: null,
+        camera: { x: 500, y: 350, zoom: 1 },
+        pointer: null,
+        layoutRunning: false,
+        recorder: null,
+        recordingPausedForBuffer: false,
+        recordingChunks: [],
+        lastFrame: performance.now()
+      };
+
+      async function api(path, options = {}) {
+        const response = await fetch(`${BASE}/api/${path}`, {
+          headers: { "Content-Type": "application/json" },
+          ...options
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+        return payload;
+      }
+
+      function resizeCanvas(element, context) {
+        const rect = element.getBoundingClientRect();
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const width = Math.max(1, Math.round(rect.width * dpr));
+        const height = Math.max(1, Math.round(rect.height * dpr));
+        if (element.width !== width || element.height !== height) {
+          element.width = width;
+          element.height = height;
+          context.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+        return { width: rect.width, height: rect.height, dpr };
+      }
+
+      function screenPoint(node, size) {
+        return {
+          x: size.width / 2 + (node.x - state.camera.x) * state.camera.zoom,
+          y: size.height / 2 + (node.y - state.camera.y) * state.camera.zoom
+        };
+      }
+
+      function worldPoint(x, y, size) {
+        return {
+          x: state.camera.x + (x - size.width / 2) / state.camera.zoom,
+          y: state.camera.y + (y - size.height / 2) / state.camera.zoom
+        };
+      }
+
+      function fitView() {
+        if (!state.nodes.length) return;
+        const rect = canvas.getBoundingClientRect();
+        const xs = state.nodes.map(node => node.x);
+        const ys = state.nodes.map(node => node.y);
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
+        state.camera.x = (minX + maxX) / 2;
+        state.camera.y = (minY + maxY) / 2;
+        const spanX = Math.max(120, maxX - minX + 90);
+        const spanY = Math.max(120, maxY - minY + 90);
+        state.camera.zoom = Math.max(0.08, Math.min(3.5, Math.min(rect.width / spanX, rect.height / spanY)));
+      }
+
+      function hitNode(x, y, size) {
+        let best = null;
+        let bestDistance = 15;
+        for (const node of state.nodes) {
+          const point = screenPoint(node, size);
+          const distance = Math.hypot(x - point.x, y - point.y);
+          if (distance < bestDistance) {
+            best = node;
+            bestDistance = distance;
+          }
+        }
+        return best;
+      }
+
+      function weightColor(weight, alpha) {
+        const base = weight > 0 ? colors.positive : weight < 0 ? colors.negative : colors.neutral;
+        return colorWithAlpha(base, alpha);
+      }
+
+      function colorWithAlpha(color, alpha) {
+        if (color.startsWith("#")) {
+          const hex = color.slice(1);
+          const expanded = hex.length === 3 ? hex.split("").map(x => x + x).join("") : hex;
+          const number = parseInt(expanded, 16);
+          return `rgba(${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255}, ${alpha})`;
+        }
+        return color;
+      }
+
+      function drawArrow(edge, from, to, maxWeight) {
+        const magnitude = Math.abs(edge.weight) / Math.max(maxWeight, 1e-12);
+        const alpha = 0.10 + 0.48 * Math.sqrt(magnitude);
+        ctx.strokeStyle = weightColor(edge.weight, alpha);
+        ctx.fillStyle = weightColor(edge.weight, alpha);
+        ctx.lineWidth = 0.55 + 1.65 * Math.sqrt(magnitude);
+        if (edge.pre === edge.post) {
+          const radius = 18;
+          ctx.beginPath();
+          ctx.arc(from.x + 8, from.y - 12, radius, 0.35 * Math.PI, 2.05 * Math.PI);
+          ctx.stroke();
+          const angle = 0.35 * Math.PI;
+          const x = from.x + 8 + radius * Math.cos(angle);
+          const y = from.y - 12 + radius * Math.sin(angle);
+          arrowHead(x, y, angle + Math.PI / 2);
+          return;
+        }
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const length = Math.max(1, Math.hypot(dx, dy));
+        const ux = dx / length, uy = dy / length;
+        const startX = from.x + ux * 10, startY = from.y + uy * 10;
+        const endX = to.x - ux * 11, endY = to.y - uy * 11;
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+        arrowHead(endX, endY, Math.atan2(dy, dx));
+      }
+
+      function arrowHead(x, y, angle) {
+        const size = 5.5;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - size * Math.cos(angle - 0.55), y - size * Math.sin(angle - 0.55));
+        ctx.lineTo(x - size * Math.cos(angle + 0.55), y - size * Math.sin(angle + 0.55));
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function particlePoint(edge, progress, size) {
+        const pre = state.nodeById.get(edge.pre), post = state.nodeById.get(edge.post);
+        if (!pre || !post) return null;
+        const from = screenPoint(pre, size), to = screenPoint(post, size);
+        if (edge.pre === edge.post) {
+          const angle = -Math.PI / 2 + progress * Math.PI * 2;
+          return { x: from.x + 19 * Math.cos(angle), y: from.y - 12 + 19 * Math.sin(angle) };
+        }
+        const eased = progress * progress * (3 - 2 * progress);
+        return { x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased };
+      }
+
+      function drawRoleMarkers(node, point) {
+        ctx.lineWidth = 1.6;
+        if (node.is_input) {
+          ctx.strokeStyle = colors.roleInput;
+          ctx.fillStyle = colors.roleInput;
+          ctx.beginPath();
+          ctx.moveTo(point.x - 29, point.y);
+          ctx.lineTo(point.x - 12, point.y);
+          ctx.stroke();
+          arrowHead(point.x - 12, point.y, 0);
+        }
+        if (node.is_output) {
+          ctx.strokeStyle = colors.roleOutput;
+          ctx.fillStyle = colors.roleOutput;
+          ctx.beginPath();
+          ctx.moveTo(point.x + 12, point.y);
+          ctx.lineTo(point.x + 29, point.y);
+          ctx.stroke();
+          arrowHead(point.x + 29, point.y, 0);
+        }
+        if (state.camera.zoom > 0.7 || node.id === state.selected) {
+          ctx.font = "9px Inter, system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          if (node.is_input) {
+            ctx.fillStyle = colors.roleInput;
+            ctx.fillText("IN", point.x - 20, point.y - 6);
+          }
+          if (node.is_output) {
+            ctx.fillStyle = colors.roleOutput;
+            ctx.fillText("OUT", point.x + 20, point.y - 6);
+          }
+        }
+      }
+
+      function drawNetwork() {
+        const size = resizeCanvas(canvas, ctx);
+        ctx.clearRect(0, 0, size.width, size.height);
+        const maxWeight = Math.max(1e-12, ...state.edges.map(edge => Math.abs(edge.weight)));
+        for (const edge of state.edges) {
+          const pre = state.nodeById.get(edge.pre), post = state.nodeById.get(edge.post);
+          if (!pre || !post) continue;
+          drawArrow(edge, screenPoint(pre, size), screenPoint(post, size), maxWeight);
+        }
+
+        const flashWindow = Math.max(0.16, state.graph ? state.graph.step * 0.45 : 0.3);
+        const latestVisibleSpike = new Map();
+        for (const event of state.spikeEvents) {
+          if (
+            event.t <= state.displayTime + 1e-12
+            && state.displayTime - event.t < flashWindow
+          ) {
+            const previous = latestVisibleSpike.get(event.node);
+            if (!previous || event.t >= previous.t) latestVisibleSpike.set(event.node, event);
+          }
+        }
+        for (const node of state.nodes) {
+          const point = screenPoint(node, size);
+          drawRoleMarkers(node, point);
+          const recentSpike = latestVisibleSpike.get(node.id);
+          if (recentSpike) {
+            const pulse = 1 - Math.min(1, (state.displayTime - recentSpike.t) / flashWindow);
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 10.5, 0, Math.PI * 2);
+            ctx.strokeStyle = colorWithAlpha(colors.warning, 0.25 + 0.45 * pulse);
+            ctx.lineWidth = 1.4;
+            ctx.stroke();
+          }
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, node.id === state.selected ? 8.5 : 7, 0, Math.PI * 2);
+          ctx.fillStyle = recentSpike
+            ? colors.warning
+            : node.polarity === "INHIBITORY"
+              ? colorWithAlpha(colors.negative, 0.82)
+              : node.polarity === "MIXED"
+                ? colorWithAlpha(colors.muted, 0.82)
+                : colorWithAlpha(colors.positive, 0.82);
+          ctx.fill();
+          ctx.lineWidth = node.id === state.selected ? 2.5 : 1;
+          ctx.strokeStyle = node.id === state.selected ? colors.accent : colors.panel;
+          ctx.stroke();
+          if (state.camera.zoom > 1.6 || node.id === state.selected || node.is_input || node.is_output) {
+            ctx.fillStyle = colors.text;
+            ctx.font = "11px Inter, system-ui, sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            ctx.fillText(node.label, point.x, point.y + 11);
+          }
+        }
+
+        const surviving = [];
+        for (const particle of state.particles) {
+          const visualEnd = Math.max(particle.end, particle.start + Math.max(0.2, state.graph.step * 0.25));
+          if (state.displayTime < particle.start || state.displayTime > visualEnd + 0.15) {
+            if (state.displayTime <= visualEnd + 0.15) surviving.push(particle);
+            continue;
+          }
+          const progress = Math.max(0, Math.min(1, (state.displayTime - particle.start) / Math.max(1e-9, visualEnd - particle.start)));
+          const point = particlePoint(particle.edge, progress, size);
+          if (point) {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 3.2, 0, Math.PI * 2);
+            ctx.fillStyle = colors.warning;
+            ctx.fill();
+          }
+          surviving.push(particle);
+        }
+        state.particles = surviving.slice(-30000);
+      }
+
+      function formatPlotValue(value) {
+        if (!Number.isFinite(value)) return "—";
+        const magnitude = Math.abs(value);
+        if ((magnitude > 0 && magnitude < 0.001) || magnitude >= 10000) return value.toExponential(2);
+        if (magnitude >= 100) return value.toFixed(1);
+        if (magnitude >= 1) return value.toFixed(2);
+        return value.toFixed(3);
+      }
+
+      function updatePlotHeight() {
+        const count = Math.max(1, state.series.size + 1);
+        $("plotWrap").style.height = `${Math.max(210, count * 112 + 92)}px`;
+      }
+
+      function drawPlot() {
+        const size = resizeCanvas(plotCanvas, plotCtx);
+        plotCtx.clearRect(0, 0, size.width, size.height);
+        state.plotGeometry = null;
+        if (state.selected === null || !state.series.size) return;
+        const spikes = (state.spikesByNode.get(state.selected) || []).filter(
+          time => time + 1e-12 >= state.selectedSince
+            && time <= state.displayTime + 1e-12
+        );
+        const ratePoints = [];
+        for (let index = 1; index < spikes.length; index++) {
+          const interval = spikes[index] - spikes[index - 1];
+          if (interval > 0 && Number.isFinite(interval)) {
+            ratePoints.push({ t: spikes[index], v: 1 / interval });
+          }
+        }
+        const entries = [
+          ["inter-spike rate", ratePoints],
+          ...[...state.series.entries()].map(([name, points]) => [
+            name,
+            points.filter(point => point.t <= state.displayTime + 1e-12)
+          ])
+        ];
+        const all = entries.flatMap(([, points]) => points);
+        const timeline = [...all.map(point => point.t), ...spikes];
+        const margin = { left: 52, right: 10, top: 8, bottom: 26 };
+        const gap = 12;
+        const spikeLaneH = 52;
+        const plotW = Math.max(1, size.width - margin.left - margin.right);
+        const availableH = Math.max(1, size.height - margin.top - margin.bottom);
+        const stateH = Math.max(64, availableH - spikeLaneH - gap);
+        const laneH = Math.max(64, (stateH - gap * (entries.length - 1)) / entries.length);
+        let minT = timeline.length ? Math.min(state.selectedSince, ...timeline) : state.selectedSince;
+        let maxT = timeline.length ? Math.max(state.displayTime, ...timeline) : state.displayTime;
+        if (maxT <= minT) maxT = minT + Math.max(1, state.graph.step);
+        const x = t => margin.left + (t - minT) / (maxT - minT) * plotW;
+
+        const spikeChartTop = margin.top + 18;
+        const spikeChartH = spikeLaneH - 22;
+        plotCtx.font = "11px Inter, system-ui, sans-serif";
+        plotCtx.textBaseline = "top";
+        plotCtx.textAlign = "left";
+        plotCtx.fillStyle = colors.text;
+        plotCtx.fillText("spikes", margin.left, margin.top);
+        plotCtx.textAlign = "right";
+        plotCtx.fillStyle = colors.muted;
+        const spikeSummary = spikes.length
+          ? `${spikes.length.toLocaleString()} · latest t ${spikes.at(-1).toPrecision(8)}`
+          : "no spikes";
+        plotCtx.fillText(spikeSummary, margin.left + plotW, margin.top);
+        const spikeBaseline = spikeChartTop + spikeChartH / 2;
+        plotCtx.strokeStyle = colors.line;
+        plotCtx.lineWidth = 1;
+        plotCtx.beginPath();
+        plotCtx.moveTo(margin.left, spikeBaseline);
+        plotCtx.lineTo(margin.left + plotW, spikeBaseline);
+        plotCtx.stroke();
+        plotCtx.strokeStyle = colors.warning;
+        plotCtx.lineWidth = 1.5;
+        for (const time of spikes) {
+          const spikeX = x(time);
+          plotCtx.beginPath();
+          plotCtx.moveTo(spikeX, spikeChartTop + 2);
+          plotCtx.lineTo(spikeX, spikeChartTop + spikeChartH - 2);
+          plotCtx.stroke();
+        }
+        state.plotGeometry = {
+          minT,
+          maxT,
+          left: margin.left,
+          width: plotW,
+          spikeTop: spikeChartTop,
+          spikeBottom: spikeChartTop + spikeChartH,
+          spikes
+        };
+        plotCanvas.setAttribute(
+          "aria-label",
+          `Selected neuron state variables, inter-spike firing rate, and ${spikes.length} tracked spike${spikes.length === 1 ? "" : "s"} over simulation time`
+        );
+
+        entries.forEach(([name, points], seriesIndex) => {
+          const laneTop = margin.top + spikeLaneH + gap + seriesIndex * (laneH + gap);
+          const chartTop = laneTop + 18;
+          const chartH = Math.max(30, laneH - 20);
+          let minY = points.length ? Math.min(...points.map(point => point.v)) : -1;
+          let maxY = points.length ? Math.max(...points.map(point => point.v)) : 1;
+          if (maxY <= minY) {
+            const scale = Math.max(1, Math.abs(minY) * 0.05);
+            minY -= scale;
+            maxY += scale;
+          }
+          const pad = (maxY - minY) * 0.08;
+          minY -= pad;
+          maxY += pad;
+          const y = value => chartTop + (maxY - value) / (maxY - minY) * chartH;
+
+          plotCtx.font = "11px Inter, system-ui, sans-serif";
+          plotCtx.textBaseline = "top";
+          plotCtx.textAlign = "left";
+          plotCtx.fillStyle = colors.text;
+          plotCtx.fillText(name, margin.left, laneTop);
+          plotCtx.textAlign = "right";
+          plotCtx.fillStyle = colors.muted;
+          const emptyLabel = name === "inter-spike rate" ? "needs 2 spikes" : "awaiting samples";
+          const latestLabel = name === "inter-spike rate"
+            ? `latest ${formatPlotValue(points.at(-1)?.v)} spikes/unit`
+            : `latest ${formatPlotValue(points.at(-1)?.v)}`;
+          plotCtx.fillText(points.length ? latestLabel : emptyLabel, margin.left + plotW, laneTop);
+
+          plotCtx.strokeStyle = colors.line;
+          plotCtx.lineWidth = 1;
+          for (let gridIndex = 0; gridIndex <= 2; gridIndex++) {
+            const gridY = chartTop + chartH * gridIndex / 2;
+            plotCtx.beginPath();
+            plotCtx.moveTo(margin.left, gridY);
+            plotCtx.lineTo(margin.left + plotW, gridY);
+            plotCtx.stroke();
+          }
+          plotCtx.fillStyle = colors.muted;
+          plotCtx.textAlign = "right";
+          plotCtx.textBaseline = "middle";
+          plotCtx.fillText(formatPlotValue(maxY), margin.left - 6, chartTop);
+          plotCtx.fillText(formatPlotValue(minY), margin.left - 6, chartTop + chartH);
+
+          if (points.length) {
+            plotCtx.strokeStyle = colors.series[seriesIndex % colors.series.length];
+            plotCtx.lineWidth = 1.8;
+            plotCtx.beginPath();
+            points.forEach((point, index) => index
+              ? plotCtx.lineTo(x(point.t), y(point.v))
+              : plotCtx.moveTo(x(point.t), y(point.v)));
+            plotCtx.stroke();
+            if (name === "inter-spike rate") {
+              plotCtx.fillStyle = colors.series[seriesIndex % colors.series.length];
+              for (const point of points) {
+                plotCtx.beginPath();
+                plotCtx.arc(x(point.t), y(point.v), 2.2, 0, Math.PI * 2);
+                plotCtx.fill();
+              }
+            }
+          }
+        });
+
+        const axisY = size.height - margin.bottom + 6;
+        plotCtx.fillStyle = colors.muted;
+        plotCtx.font = "11px Inter, system-ui, sans-serif";
+        plotCtx.textBaseline = "top";
+        plotCtx.textAlign = "left";
+        plotCtx.fillText(minT.toFixed(2), margin.left, axisY);
+        plotCtx.textAlign = "center";
+        plotCtx.fillText("time", margin.left + plotW / 2, axisY);
+        plotCtx.textAlign = "right";
+        plotCtx.fillText(maxT.toFixed(2), margin.left + plotW, axisY);
+      }
+
+      function playbackFinished() {
+        return !!state.graph?.finished && state.displayTime + 1e-12 >= state.serverFrontier;
+      }
+
+      function recorderActive() {
+        return !!state.recorder && (state.recorder.state === "recording" || state.recorder.state === "paused");
+      }
+
+      function liveBufferTarget() {
+        return Math.max(state.graph.step * 2, state.speed * 0.6);
+      }
+
+      function recordingBufferTarget() {
+        return Math.max(state.graph.step * 5, state.speed * 1.5);
+      }
+
+      function pauseRecordingForBuffer() {
+        if (!recorderActive() || state.graph.finished || state.recordingPausedForBuffer) return;
+        state.recordingPausedForBuffer = true;
+        if (state.recorder.state === "recording") state.recorder.pause();
+        $("recordButton").textContent = "Stop & save · buffering";
+      }
+
+      function resumeRecordingIfBuffered() {
+        if (!state.recordingPausedForBuffer || !state.recorder) return;
+        const buffered = state.serverFrontier - state.displayTime;
+        if (!state.graph.finished && buffered + 1e-12 < recordingBufferTarget()) return;
+        if (state.recorder.state === "paused") state.recorder.resume();
+      }
+
+      function maintainPlaybackBuffer() {
+        if (!state.playing || state.waiting || state.graph.finished) return;
+        const target = recorderActive() ? recordingBufferTarget() : liveBufferTarget();
+        if (state.serverFrontier - state.displayTime < target) {
+          requestStep({ animate: true });
+        }
+      }
+
+      function updateReadouts() {
+        $("timeReadout").textContent = `t = ${state.displayTime.toFixed(3)} / ${state.duration.toFixed(3)}`;
+        $("activityReadout").textContent = `${state.totalSpikes.toLocaleString()} spikes · ${state.particles.length.toLocaleString()} in flight`;
+        $("playButton").textContent = state.playing ? "Pause" : playbackFinished() ? "Finished" : "Play";
+        $("playButton").disabled = playbackFinished();
+        $("stepButton").disabled = playbackFinished()
+          || (state.waiting && state.displayTime + 1e-12 >= state.serverFrontier);
+      }
+
+      function appendChunk(payload) {
+        const oldFrontier = state.serverFrontier;
+        state.serverFrontier = payload.frontier;
+        state.chunkStart = oldFrontier;
+        state.chunkEnd = payload.frontier;
+        state.graph.finished = payload.finished;
+        for (const spike of payload.spikes) {
+          state.spikeEvents.push(spike);
+          state.totalSpikes++;
+          if (!state.spikesByNode.has(spike.node)) state.spikesByNode.set(spike.node, []);
+          const spikeTimes = state.spikesByNode.get(spike.node);
+          spikeTimes.push(spike.t);
+          if (spikeTimes.length > 20000) spikeTimes.splice(0, spikeTimes.length - 20000);
+          for (const edge of state.outgoing.get(spike.node) || []) {
+            state.particles.push({ edge, start: spike.t, end: spike.t + edge.delay });
+          }
+        }
+        state.spikeEvents = state.spikeEvents.filter(event => event.t >= state.displayTime - 10).slice(-20000);
+        for (const sample of payload.states) {
+          if (sample.node !== state.selected) continue;
+          sample.names.forEach((name, index) => {
+            if (!state.series.has(name)) state.series.set(name, []);
+            const points = state.series.get(name);
+            points.push({ t: sample.t, v: sample.values[index], clamped: sample.clamped });
+            if (points.length > 10000) points.splice(0, points.length - 10000);
+          });
+        }
+      }
+
+      async function requestStep({ animate = true } = {}) {
+        if (state.waiting || state.graph.finished) return;
+        state.waiting = true;
+        try {
+          const payload = await api("step", { method: "POST", body: "{}" });
+          appendChunk(payload);
+          if (!animate) state.displayTime = payload.frontier;
+        } catch (error) {
+          state.playing = false;
+          showInputMessage(error.message, "error");
+        } finally {
+          state.waiting = false;
+          resumeRecordingIfBuffered();
+        }
+      }
+
+      async function manualStep() {
+        if (state.displayTime + 1e-12 < state.serverFrontier) {
+          state.displayTime = Math.min(
+            state.serverFrontier,
+            state.displayTime + state.graph.step
+          );
+          return;
+        }
+        await requestStep({ animate: false });
+      }
+
+      async function selectNode(node) {
+        state.selected = node ? node.id : null;
+        state.selectedSince = state.displayTime;
+        state.series.clear();
+        if (node) node.state_names.forEach(name => state.series.set(name, []));
+        updatePlotHeight();
+        $("plotEmpty").classList.toggle("hidden", !!node);
+        if (!node) {
+          $("selectedName").textContent = "None";
+          $("selectedMeta").textContent = "Click a neuron to begin exact-time state and spike tracking.";
+          await api("select", { method: "POST", body: JSON.stringify({ node: null }) });
+          return;
+        }
+        $("selectedName").textContent = `${node.label} · node ${node.id}`;
+        const group = node.reservoir ? `reservoir ${node.reservoir}` : node.population ? `population ${node.population}` : "standalone";
+        const polarity = node.polarity.toLowerCase();
+        const roles = [node.is_input ? "input" : null, node.is_output ? "output" : null].filter(Boolean);
+        const role = roles.length ? ` · ${roles.join(" + ")}` : "";
+        $("selectedMeta").textContent = `${node.model} · ${polarity} · ${group}${role} · states: ${node.state_names.join(", ")}`;
+        const matchingPort = state.inputs.find(port => port.node === node.id);
+        if (matchingPort) {
+          $("portSelect").value = matchingPort.id;
+          updateInputFields();
+        }
+        try {
+          await api("select", { method: "POST", body: JSON.stringify({ node: node.id }) });
+        } catch (error) {
+          showInputMessage(error.message, "error");
+        }
+      }
+
+      function runForceLayout(resetPins = false) {
+        if (state.layoutRunning || !state.nodes.length) return;
+        if (resetPins) state.nodes.forEach(node => {
+          node.pinned = false;
+          node.x = node.anchorX;
+          node.y = node.anchorY;
+        });
+        state.layoutRunning = true;
+        let iteration = 0;
+        const total = state.nodes.length > 800 ? 45 : 100;
+        const batch = () => {
+          for (let inner = 0; inner < 3 && iteration < total; inner++, iteration++) {
+            const movement = new Map(state.nodes.map(node => [node.id, { x: 0, y: 0 }]));
+            const repulsionSamples = state.nodes.length > 450 ? 36 : state.nodes.length;
+            for (let index = 0; index < state.nodes.length; index++) {
+              const a = state.nodes[index];
+              for (let sample = 1; sample < repulsionSamples; sample++) {
+                const b = state.nodes[(index + sample * 37) % state.nodes.length];
+                if (a === b) continue;
+                let dx = a.x - b.x, dy = a.y - b.y;
+                let d2 = dx * dx + dy * dy;
+                if (d2 < 16) { dx += 2.7; dy -= 1.9; d2 = dx * dx + dy * dy; }
+                const force = Math.min(18, 1800 / d2) / Math.max(1, repulsionSamples / 20);
+                const d = Math.sqrt(d2);
+                movement.get(a.id).x += dx / d * force;
+                movement.get(a.id).y += dy / d * force;
+              }
+            }
+            for (const edge of state.edges) {
+              const a = state.nodeById.get(edge.pre), b = state.nodeById.get(edge.post);
+              if (!a || !b || a === b) continue;
+              const dx = b.x - a.x, dy = b.y - a.y;
+              const distance = Math.max(1, Math.hypot(dx, dy));
+              const crossesLayer = a.layout_role !== b.layout_role;
+              const target = (crossesLayer ? 150 : 70) + Math.min(60, edge.delay * 4);
+              const force = (distance - target) * 0.012;
+              movement.get(a.id).x += dx / distance * force;
+              movement.get(a.id).y += dy / distance * force;
+              movement.get(b.id).x -= dx / distance * force;
+              movement.get(b.id).y -= dy / distance * force;
+            }
+            for (const node of state.nodes) {
+              const strength = node.layout_role === "input" || node.layout_role === "output"
+                ? 0.12
+                : node.layout_role === "reservoir"
+                  ? 0.025
+                  : 0.04;
+              movement.get(node.id).x += (node.anchorX - node.x) * strength;
+              movement.get(node.id).y += (node.anchorY - node.y) * strength;
+            }
+            const cooling = 1 - iteration / total * 0.75;
+            for (const node of state.nodes) {
+              if (node.pinned) continue;
+              const delta = movement.get(node.id);
+              node.x += Math.max(-10, Math.min(10, delta.x)) * cooling;
+              node.y += Math.max(-10, Math.min(10, delta.y)) * cooling;
+            }
+          }
+          if (iteration < total) requestAnimationFrame(batch);
+          else { state.layoutRunning = false; fitView(); }
+        };
+        requestAnimationFrame(batch);
+      }
+
+      function configurePointer() {
+        canvas.addEventListener("pointerdown", event => {
+          canvas.setPointerCapture(event.pointerId);
+          const rect = canvas.getBoundingClientRect();
+          const size = { width: rect.width, height: rect.height };
+          const x = event.clientX - rect.left, y = event.clientY - rect.top;
+          const node = hitNode(x, y, size);
+          state.pointer = { id: event.pointerId, x, y, node, cameraX: state.camera.x, cameraY: state.camera.y };
+          canvas.classList.add("dragging");
+          if (node) {
+            node.pinned = true;
+            selectNode(node);
+          }
+        });
+        canvas.addEventListener("pointermove", event => {
+          if (!state.pointer || state.pointer.id !== event.pointerId) return;
+          const rect = canvas.getBoundingClientRect();
+          const size = { width: rect.width, height: rect.height };
+          const x = event.clientX - rect.left, y = event.clientY - rect.top;
+          if (state.pointer.node) {
+            const point = worldPoint(x, y, size);
+            state.pointer.node.x = point.x;
+            state.pointer.node.y = point.y;
+          } else {
+            state.camera.x = state.pointer.cameraX - (x - state.pointer.x) / state.camera.zoom;
+            state.camera.y = state.pointer.cameraY - (y - state.pointer.y) / state.camera.zoom;
+          }
+        });
+        const endPointer = event => {
+          if (state.pointer?.id === event.pointerId) state.pointer = null;
+          canvas.classList.remove("dragging");
+        };
+        canvas.addEventListener("pointerup", endPointer);
+        canvas.addEventListener("pointercancel", endPointer);
+        canvas.addEventListener("wheel", event => {
+          event.preventDefault();
+          const rect = canvas.getBoundingClientRect();
+          const size = { width: rect.width, height: rect.height };
+          const x = event.clientX - rect.left, y = event.clientY - rect.top;
+          const before = worldPoint(x, y, size);
+          state.camera.zoom = Math.max(0.05, Math.min(8, state.camera.zoom * Math.exp(-event.deltaY * 0.001)));
+          const after = worldPoint(x, y, size);
+          state.camera.x += before.x - after.x;
+          state.camera.y += before.y - after.y;
+        }, { passive: false });
+      }
+
+      function configurePlotPointer() {
+        const tooltip = $("plotTooltip");
+        const hide = () => tooltip.classList.add("hidden");
+        plotCanvas.addEventListener("pointermove", event => {
+          const geometry = state.plotGeometry;
+          if (!geometry || !geometry.spikes.length) {
+            hide();
+            return;
+          }
+          const rect = plotCanvas.getBoundingClientRect();
+          const localX = event.clientX - rect.left;
+          const localY = event.clientY - rect.top;
+          if (localY < geometry.spikeTop || localY > geometry.spikeBottom) {
+            hide();
+            return;
+          }
+          const target = geometry.minT
+            + (localX - geometry.left) / geometry.width * (geometry.maxT - geometry.minT);
+          let low = 0, high = geometry.spikes.length;
+          while (low < high) {
+            const middle = (low + high) >> 1;
+            if (geometry.spikes[middle] < target) low = middle + 1;
+            else high = middle;
+          }
+          const candidates = [geometry.spikes[low - 1], geometry.spikes[low]].filter(Number.isFinite);
+          const nearest = candidates.reduce(
+            (best, time) => best === null || Math.abs(time - target) < Math.abs(best - target) ? time : best,
+            null
+          );
+          const spikeX = geometry.left
+            + (nearest - geometry.minT) / (geometry.maxT - geometry.minT) * geometry.width;
+          if (nearest === null || Math.abs(spikeX - localX) > 7) {
+            hide();
+            return;
+          }
+          tooltip.textContent = `Spike at t = ${nearest.toPrecision(15)}`;
+          tooltip.classList.remove("hidden");
+          const left = Math.max(3, Math.min(rect.width - tooltip.offsetWidth - 3, spikeX + 7));
+          const top = Math.max(3, localY - tooltip.offsetHeight - 6);
+          tooltip.style.left = `${left}px`;
+          tooltip.style.top = `${top}px`;
+        });
+        plotCanvas.addEventListener("pointerleave", hide);
+      }
+
+      function updateInputFields() {
+        const port = state.inputs.find(item => item.id === $("portSelect").value);
+        const enabled = !!port && !state.graph.finished;
+        $("injectButton").disabled = !enabled;
+        $("spikeFields").classList.toggle("hidden", !port || port.injection_kind !== "spike");
+        $("presentationFields").classList.toggle("hidden", !port || port.injection_kind !== "presentation");
+        $("driveFields").classList.toggle("hidden", !port || port.injection_kind !== "drive");
+        if (!port) {
+          $("inputKind").textContent = "No input ports are defined on this network.";
+          return;
+        }
+        const node = state.nodeById.get(port.node);
+        const parameter = port.parameter ? ` · parameter ${port.parameter}` : "";
+        $("inputKind").textContent = `${port.encoder.replaceAll("_", " ").toLowerCase()} → ${node?.label || port.node}${parameter}`;
+      }
+
+      function numberValue(id) { return Number($(id).value); }
+
+      async function injectInput() {
+        const port = state.inputs.find(item => item.id === $("portSelect").value);
+        if (!port) return;
+        let payload = { port: port.id, kind: port.injection_kind };
+        if (port.injection_kind === "spike") {
+          Object.assign(payload, { amplitude: numberValue("spikeAmplitude"), count: Math.round(numberValue("spikeCount")), interval: numberValue("spikeInterval"), offset: numberValue("spikeOffset") });
+        } else if (port.injection_kind === "presentation") {
+          Object.assign(payload, { value: numberValue("presentationValue"), duration: numberValue("presentationDuration"), offset: numberValue("presentationOffset") });
+        } else {
+          Object.assign(payload, { value: numberValue("driveValue"), duration: numberValue("driveDuration"), baseline: numberValue("driveBaseline"), offset: numberValue("driveOffset") });
+        }
+        try {
+          const result = await api("inject", { method: "POST", body: JSON.stringify(payload) });
+          showInputMessage(`Scheduled ${result.scheduled} event${result.scheduled === 1 ? "" : "s"} on ${result.port}.`, "success");
+        } catch (error) {
+          showInputMessage(error.message, "error");
+        }
+      }
+
+      function showInputMessage(message, kind = "") {
+        const element = $("inputMessage");
+        element.textContent = message;
+        element.className = `message ${kind}`.trim();
+      }
+
+      function downloadBlob(blob, name) {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = name;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      function screenshot() {
+        canvas.toBlob(blob => {
+          if (blob) downloadBlob(blob, `lacuna-${state.graph.name}-t${state.displayTime.toFixed(3)}.png`);
+        }, "image/png");
+      }
+
+      function toggleRecording() {
+        if (recorderActive()) {
+          state.recorder.stop();
+          return;
+        }
+        if (!canvas.captureStream || !window.MediaRecorder) {
+          showInputMessage("This browser does not support native canvas recording.", "error");
+          return;
+        }
+        const stream = canvas.captureStream(60);
+        const preferred = "video/webm;codecs=vp9";
+        const options = MediaRecorder.isTypeSupported(preferred) ? { mimeType: preferred, videoBitsPerSecond: 8_000_000 } : { videoBitsPerSecond: 8_000_000 };
+        state.recordingChunks = [];
+        state.recordingPausedForBuffer = false;
+        state.recorder = new MediaRecorder(stream, options);
+        state.recorder.ondataavailable = event => { if (event.data.size) state.recordingChunks.push(event.data); };
+        state.recorder.onpause = resumeRecordingIfBuffered;
+        state.recorder.onresume = () => {
+          state.recordingPausedForBuffer = false;
+          $("recordButton").textContent = "Stop & save";
+        };
+        state.recorder.onstop = () => {
+          downloadBlob(new Blob(state.recordingChunks, { type: state.recorder.mimeType || "video/webm" }), `lacuna-${state.graph.name}-activity.webm`);
+          state.recordingPausedForBuffer = false;
+          $("recordButton").textContent = "Start recording";
+          $("recordButton").classList.remove("active");
+        };
+        state.recorder.start(1000);
+        $("recordButton").textContent = "Stop & save";
+        $("recordButton").classList.add("active");
+      }
+
+      async function restart() {
+        state.playing = false;
+        try {
+          await api("reset", { method: "POST", body: "{}" });
+          state.displayTime = 0;
+          state.serverFrontier = 0;
+          state.chunkStart = 0;
+          state.chunkEnd = 0;
+          state.totalSpikes = 0;
+          state.spikeEvents = [];
+          state.spikesByNode.clear();
+          state.particles = [];
+          state.series.clear();
+          state.graph.finished = false;
+          state.selected = null;
+          await selectNode(null);
+          updateInputFields();
+          showInputMessage("Run restarted.", "success");
+        } catch (error) {
+          showInputMessage(error.message, "error");
+        }
+      }
+
+      function animate(now) {
+        const elapsed = Math.min(0.1, (now - state.lastFrame) / 1000);
+        state.lastFrame = now;
+        let stopCompletedRecording = false;
+        if (state.playing) {
+          resumeRecordingIfBuffered();
+          if (!state.recordingPausedForBuffer && state.displayTime + 1e-12 < state.serverFrontier) {
+            state.displayTime = Math.min(state.serverFrontier, state.displayTime + elapsed * state.speed);
+          } else if (!state.graph.finished && state.displayTime + 1e-12 >= state.serverFrontier) {
+            pauseRecordingForBuffer();
+          } else if (playbackFinished()) {
+            state.playing = false;
+            stopCompletedRecording = recorderActive();
+          }
+          maintainPlaybackBuffer();
+        }
+        drawNetwork();
+        drawPlot();
+        updateReadouts();
+        if (stopCompletedRecording) state.recorder.stop();
+        requestAnimationFrame(animate);
+      }
+
+      async function initialize() {
+        try {
+          const graph = await api("graph");
+          state.graph = graph;
+          state.duration = graph.duration;
+          state.serverFrontier = graph.frontier;
+          state.displayTime = graph.frontier;
+          state.nodes = graph.nodes.map(node => ({
+            ...node,
+            x: node.x * 1000,
+            y: node.y * 700,
+            anchorX: node.x * 1000,
+            anchorY: node.y * 700,
+            pinned: false
+          }));
+          state.nodeById = new Map(state.nodes.map(node => [node.id, node]));
+          state.edges = graph.edges;
+          state.inputs = graph.inputs;
+          state.outgoing = new Map();
+          for (const edge of state.edges) {
+            if (!state.outgoing.has(edge.pre)) state.outgoing.set(edge.pre, []);
+            state.outgoing.get(edge.pre).push(edge);
+          }
+          $("networkName").textContent = graph.name;
+          $("networkSize").textContent = `${graph.nodes.length.toLocaleString()} neurons · ${graph.edges.length.toLocaleString()} synapses`;
+          const select = $("portSelect");
+          select.replaceChildren();
+          for (const port of state.inputs) {
+            const option = document.createElement("option");
+            option.value = port.id;
+            option.textContent = `${port.id} → ${state.nodeById.get(port.node)?.label || port.node}`;
+            select.append(option);
+          }
+          updateInputFields();
+          fitView();
+          runForceLayout(false);
+        } catch (error) {
+          $("networkName").textContent = "Visualizer error";
+          showInputMessage(error.message, "error");
+        }
+      }
+
+      $("playButton").addEventListener("click", () => { state.playing = !state.playing; });
+      $("stepButton").addEventListener("click", manualStep);
+      $("resetButton").addEventListener("click", restart);
+      $("speedSelect").addEventListener("change", event => { state.speed = Number(event.target.value); });
+      $("layoutButton").addEventListener("click", () => runForceLayout(true));
+      $("fitButton").addEventListener("click", fitView);
+      $("portSelect").addEventListener("change", updateInputFields);
+      $("injectButton").addEventListener("click", injectInput);
+      $("screenshotButton").addEventListener("click", screenshot);
+      $("recordButton").addEventListener("click", toggleRecording);
+      $("closeButton").addEventListener("click", async () => {
+        state.playing = false;
+        const button = $("closeButton");
+        button.disabled = true;
+        button.textContent = "Closing…";
+        try {
+          await api("close", { method: "POST", body: "{}", keepalive: true });
+          window.close();
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = "Close session";
+          showInputMessage(`Could not close the session: ${error.message}`, "error");
+        }
+      });
+      configurePointer();
+      configurePlotPointer();
+      new ResizeObserver(() => { drawNetwork(); drawPlot(); }).observe($("stage"));
+      requestAnimationFrame(animate);
+      initialize();
+    })();
+  </script>
+</body>
+</html>

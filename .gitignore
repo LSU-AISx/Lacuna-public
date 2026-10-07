@@ -1,0 +1,49 @@
+# Python environments, caches, and packaging output
+/.venv/
+/venv/
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+/.coverage
+/htmlcov/
+/dist/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+*.whl
+
+# CMake and native build output
+/build/
+/build-release/
+/build-debug/
+/build-sanitize/
+/build-float32/
+/build-float32-time64/
+/build-float16/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Testing/
+cmake_install.cmake
+compile_commands.json
+*.dylib
+*.so
+*.dll
+
+# Generated experiments, datasets, checkpoints, and reports
+/artifacts/
+/tmp/
+/validation/network_report.json
+
+# Separate repositories and local ChatGPT project context
+/lacuna-eons-wine-bench/
+/lacuna-benchmarks/
+/sources/
+/AGENTS.md
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.tmp

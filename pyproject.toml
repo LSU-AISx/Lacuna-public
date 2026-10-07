@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lacuna-snn"
+version = "0.1.0.dev0"
+description = "Event-driven spiking neural network engine"
+requires-python = ">=3.10"
+dependencies = ["sympy==1.14.0"]
+
+[project.optional-dependencies]
+mnist = ["numpy>=1.24"]
+mnist-search = [
+  "numpy>=1.24",
+  "optuna==4.9.0",
+  "psycopg[binary]>=3.1,<4",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+lacuna = ["_visualizer.html"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests/python"]
+addopts = "-q"

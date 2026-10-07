@@ -1,0 +1,632 @@
+{
+  "cases": [
+    {
+      "absolute_tolerance": "0x1.b7cdfd9d7bdbbp-34",
+      "case_sha256": "992a39d52e8b70060d026ee9b6a4c8ac8aaecbfec9b02aaa78f529c17809d459",
+      "expected": {
+        "decoded": [],
+        "decoded_events": [],
+        "spikes": [
+          {
+            "node": 0,
+            "t": "0x1.0000000000000p+0"
+          },
+          {
+            "node": 1,
+            "t": "0x1.4000000000000p+0"
+          },
+          {
+            "node": 2,
+            "t": "0x1.8000000000000p+0"
+          },
+          {
+            "node": 3,
+            "t": "0x1.c000000000000p+0"
+          },
+          {
+            "node": 4,
+            "t": "0x1.0000000000000p+1"
+          },
+          {
+            "node": 5,
+            "t": "0x1.2000000000000p+1"
+          },
+          {
+            "node": 6,
+            "t": "0x1.4000000000000p+1"
+          },
+          {
+            "node": 7,
+            "t": "0x1.6000000000000p+1"
+          }
+        ],
+        "states": [
+          {
+            "node": 0,
+            "t": "0x1.0000000000000p+2",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          },
+          {
+            "node": 1,
+            "t": "0x1.0000000000000p+2",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          },
+          {
+            "node": 2,
+            "t": "0x1.0000000000000p+2",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          },
+          {
+            "node": 3,
+            "t": "0x1.0000000000000p+2",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          },
+          {
+            "node": 4,
+            "t": "0x1.0000000000000p+2",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          },
+          {
+            "node": 5,
+            "t": "0x1.0000000000000p+2",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          },
+          {
+            "node": 6,
+            "t": "0x1.0000000000000p+2",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          },
+          {
+            "node": 7,
+            "t": "0x1.0000000000000p+2",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          }
+        ],
+        "stats": {
+          "autonomous_spikes_confirmed": 0,
+          "deliveries_processed": 7,
+          "deliveries_scheduled": 7,
+          "drive_updates_processed": 0,
+          "events_popped": 13,
+          "input_spikes_processed": 1,
+          "max_same_time_cascade_depth": 1,
+          "output_spikes": 8,
+          "peak_queue_occupancy": 6,
+          "refractory_releases_processed": 5,
+          "stale_predictions": 0
+        },
+        "trace_kind_counts": {
+          "DELIVERY": 7,
+          "DEPOSIT_APPLY": 8,
+          "FINAL_STATE": 8,
+          "INPUT_SPIKE": 1,
+          "REFRACTORY_ENTER": 8,
+          "REFRACTORY_RELEASE": 5,
+          "RESET": 8,
+          "SPIKE": 8
+        }
+      },
+      "graph_sha256": "ad9fdcc2b0d8ca50de21ddd32b8cd5ec4722205695d24773442843b561e7855d",
+      "name": "feedforward_chain_8",
+      "t_end": "0x1.0000000000000p+2"
+    },
+    {
+      "absolute_tolerance": "0x1.b7cdfd9d7bdbbp-34",
+      "case_sha256": "d1888311ec00f97b14930c04ae4a5d58676be74ed3bf8e4457ba0212fce9c4ae",
+      "expected": {
+        "decoded": [],
+        "decoded_events": [],
+        "spikes": [
+          {
+            "node": 0,
+            "t": "0x1.2dce9df5c6435p+4"
+          },
+          {
+            "node": 1,
+            "t": "0x1.2dce9df5c6435p+4"
+          },
+          {
+            "node": 2,
+            "t": "0x1.2dce9df5c6435p+4"
+          },
+          {
+            "node": 3,
+            "t": "0x1.2dce9df5c6435p+4"
+          }
+        ],
+        "states": [
+          {
+            "node": 0,
+            "t": "0x1.4000000000000p+5",
+            "values": [
+              "-0x1.fbe786db88fafp+5"
+            ]
+          },
+          {
+            "node": 1,
+            "t": "0x1.4000000000000p+5",
+            "values": [
+              "-0x1.fbe786db88fafp+5"
+            ]
+          },
+          {
+            "node": 2,
+            "t": "0x1.4000000000000p+5",
+            "values": [
+              "-0x1.fbe786db88fafp+5"
+            ]
+          },
+          {
+            "node": 3,
+            "t": "0x1.4000000000000p+5",
+            "values": [
+              "-0x1.fbe786db88fafp+5"
+            ]
+          }
+        ],
+        "stats": {
+          "autonomous_spikes_confirmed": 4,
+          "deliveries_processed": 0,
+          "deliveries_scheduled": 0,
+          "drive_updates_processed": 8,
+          "events_popped": 20,
+          "input_spikes_processed": 0,
+          "max_same_time_cascade_depth": 1,
+          "output_spikes": 4,
+          "peak_queue_occupancy": 8,
+          "refractory_releases_processed": 4,
+          "stale_predictions": 4
+        },
+        "trace_kind_counts": {
+          "DRIVE_UPDATE": 8,
+          "FINAL_STATE": 4,
+          "PREDICTION_CONFIRMED": 4,
+          "REFRACTORY_ENTER": 4,
+          "REFRACTORY_RELEASE": 4,
+          "RESET": 4,
+          "SPIKE": 4,
+          "STALE_PREDICTION": 4
+        }
+      },
+      "graph_sha256": "bcd525b30293e9104db8defcb423e3c2a91dca4125ae0863c3f2c5e6911fa6b3",
+      "name": "drive_boundaries_4",
+      "t_end": "0x1.4000000000000p+5"
+    },
+    {
+      "absolute_tolerance": "0x1.b7cdfd9d7bdbbp-34",
+      "case_sha256": "0480118ae547aec55940a4848ceb8a2ce8f574d6966e241015b0846b60334986",
+      "expected": {
+        "decoded": [],
+        "decoded_events": [],
+        "spikes": [
+          {
+            "node": 0,
+            "t": "0x1.4761f89ada38ep+3"
+          },
+          {
+            "node": 1,
+            "t": "0x1.4761f89ada38ep+3"
+          },
+          {
+            "node": 2,
+            "t": "0x1.4761f89ada38ep+3"
+          },
+          {
+            "node": 3,
+            "t": "0x1.4761f89ada38ep+3"
+          }
+        ],
+        "states": [
+          {
+            "node": 0,
+            "t": "0x1.8000000000000p+3",
+            "values": [
+              "-0x1.0400000000000p+6",
+              "0x1.f33c15f9b0f91p+0",
+              "0x1.6b146d12af40cp-3"
+            ]
+          },
+          {
+            "node": 1,
+            "t": "0x1.8000000000000p+3",
+            "values": [
+              "-0x1.0400000000000p+6",
+              "0x1.f33c15f9b0f91p+0",
+              "0x1.6b146d12af40cp-3"
+            ]
+          },
+          {
+            "node": 2,
+            "t": "0x1.8000000000000p+3",
+            "values": [
+              "-0x1.0400000000000p+6",
+              "0x1.f33c15f9b0f91p+0",
+              "0x1.6b146d12af40cp-3"
+            ]
+          },
+          {
+            "node": 3,
+            "t": "0x1.8000000000000p+3",
+            "values": [
+              "-0x1.0400000000000p+6",
+              "0x1.f33c15f9b0f91p+0",
+              "0x1.6b146d12af40cp-3"
+            ]
+          }
+        ],
+        "stats": {
+          "autonomous_spikes_confirmed": 4,
+          "deliveries_processed": 0,
+          "deliveries_scheduled": 0,
+          "drive_updates_processed": 0,
+          "events_popped": 8,
+          "input_spikes_processed": 4,
+          "max_same_time_cascade_depth": 1,
+          "output_spikes": 4,
+          "peak_queue_occupancy": 4,
+          "refractory_releases_processed": 0,
+          "stale_predictions": 0
+        },
+        "trace_kind_counts": {
+          "DEPOSIT_APPLY": 4,
+          "FINAL_STATE": 4,
+          "INPUT_SPIKE": 4,
+          "PREDICTION_CONFIRMED": 4,
+          "REFRACTORY_ENTER": 4,
+          "RESET": 4,
+          "SPIKE": 4
+        }
+      },
+      "graph_sha256": "9a1716131a414b8ef9bf1511146697ae2a2e280fc52f700d5b261e4439839b66",
+      "name": "alpha_population_4",
+      "t_end": "0x1.8000000000000p+3"
+    },
+    {
+      "absolute_tolerance": "0x1.b7cdfd9d7bdbbp-34",
+      "case_sha256": "cbdfcb4b6af134462cde8de6b20c25017238f31abe4dbfd5201108fc35455e0e",
+      "expected": {
+        "decoded": [],
+        "decoded_events": [],
+        "spikes": [
+          {
+            "node": 0,
+            "t": "0x1.25368968c8c4ap+3"
+          },
+          {
+            "node": 1,
+            "t": "0x1.25368968c8c4ap+3"
+          },
+          {
+            "node": 2,
+            "t": "0x1.25368968c8c4ap+3"
+          },
+          {
+            "node": 3,
+            "t": "0x1.25368968c8c4ap+3"
+          },
+          {
+            "node": 0,
+            "t": "0x1.b84ea9f27d808p+5"
+          },
+          {
+            "node": 1,
+            "t": "0x1.b84ea9f27d808p+5"
+          },
+          {
+            "node": 2,
+            "t": "0x1.b84ea9f27d808p+5"
+          },
+          {
+            "node": 3,
+            "t": "0x1.b84ea9f27d808p+5"
+          },
+          {
+            "node": 0,
+            "t": "0x1.d63b42ace1673p+6"
+          },
+          {
+            "node": 1,
+            "t": "0x1.d63b42ace1673p+6"
+          },
+          {
+            "node": 2,
+            "t": "0x1.d63b42ace1673p+6"
+          },
+          {
+            "node": 3,
+            "t": "0x1.d63b42ace1673p+6"
+          }
+        ],
+        "states": [
+          {
+            "node": 0,
+            "t": "0x1.1800000000000p+7",
+            "values": [
+              "-0x1.e9e3971ddae63p+5",
+              "0x1.c9d8a3d77f00ep+0"
+            ]
+          },
+          {
+            "node": 1,
+            "t": "0x1.1800000000000p+7",
+            "values": [
+              "-0x1.e9e3971ddae63p+5",
+              "0x1.c9d8a3d77f00ep+0"
+            ]
+          },
+          {
+            "node": 2,
+            "t": "0x1.1800000000000p+7",
+            "values": [
+              "-0x1.e9e3971ddae63p+5",
+              "0x1.c9d8a3d77f00ep+0"
+            ]
+          },
+          {
+            "node": 3,
+            "t": "0x1.1800000000000p+7",
+            "values": [
+              "-0x1.e9e3971ddae63p+5",
+              "0x1.c9d8a3d77f00ep+0"
+            ]
+          }
+        ],
+        "stats": {
+          "autonomous_spikes_confirmed": 12,
+          "deliveries_processed": 0,
+          "deliveries_scheduled": 0,
+          "drive_updates_processed": 0,
+          "events_popped": 24,
+          "input_spikes_processed": 0,
+          "max_same_time_cascade_depth": 1,
+          "output_spikes": 12,
+          "peak_queue_occupancy": 4,
+          "refractory_releases_processed": 12,
+          "stale_predictions": 0
+        },
+        "trace_kind_counts": {
+          "FINAL_STATE": 4,
+          "PREDICTION_CONFIRMED": 12,
+          "REFRACTORY_ENTER": 12,
+          "REFRACTORY_RELEASE": 12,
+          "RESET": 12,
+          "SPIKE": 12
+        }
+      },
+      "graph_sha256": "a426d72de0c97ba8d671053b5e63f31fb839ed15cc3c68b7033bd00329627c33",
+      "name": "adaptive_population_4",
+      "t_end": "0x1.1800000000000p+7"
+    },
+    {
+      "absolute_tolerance": "0x1.b7cdfd9d7bdbbp-34",
+      "case_sha256": "6fe728f6bbccbb45deddd05d00d8edd2c8d0a8213b841256fc5ce56408f86a3a",
+      "expected": {
+        "decoded": [],
+        "decoded_events": [],
+        "spikes": [
+          {
+            "node": 0,
+            "t": "0x1.0000000000000p+0"
+          },
+          {
+            "node": 1,
+            "t": "0x1.4f61f89ada38ep+3"
+          },
+          {
+            "node": 2,
+            "t": "0x1.5761f89ada38ep+3"
+          },
+          {
+            "node": 3,
+            "t": "0x1.4361f89ada38ep+4"
+          },
+          {
+            "node": 4,
+            "t": "0x1.4761f89ada38ep+4"
+          },
+          {
+            "node": 5,
+            "t": "0x1.df12f4e847555p+4"
+          }
+        ],
+        "states": [
+          {
+            "node": 0,
+            "t": "0x1.0000000000000p+5",
+            "values": [
+              "-0x1.03fffffffffffp+6"
+            ]
+          },
+          {
+            "node": 1,
+            "t": "0x1.0000000000000p+5",
+            "values": [
+              "-0x1.ea4c71d689e65p+5",
+              "0x1.adf231de72f79p-4",
+              "0x1.bf6c6e2c2cb6cp-9"
+            ]
+          },
+          {
+            "node": 2,
+            "t": "0x1.0000000000000p+5",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          },
+          {
+            "node": 3,
+            "t": "0x1.0000000000000p+5",
+            "values": [
+              "-0x1.d745cc2d819fcp+5",
+              "0x1.0136efd71c978p-1",
+              "0x1.87961a70e0c03p-6"
+            ]
+          },
+          {
+            "node": 4,
+            "t": "0x1.0000000000000p+5",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          },
+          {
+            "node": 5,
+            "t": "0x1.0000000000000p+5",
+            "values": [
+              "-0x1.0390042a31bf9p+6",
+              "0x1.e3996729a4af3p+0",
+              "0x1.56b7ab206309ep-3"
+            ]
+          }
+        ],
+        "stats": {
+          "autonomous_spikes_confirmed": 3,
+          "deliveries_processed": 5,
+          "deliveries_scheduled": 5,
+          "drive_updates_processed": 0,
+          "events_popped": 15,
+          "input_spikes_processed": 1,
+          "max_same_time_cascade_depth": 1,
+          "output_spikes": 6,
+          "peak_queue_occupancy": 3,
+          "refractory_releases_processed": 6,
+          "stale_predictions": 0
+        },
+        "trace_kind_counts": {
+          "DELIVERY": 5,
+          "DEPOSIT_APPLY": 6,
+          "FINAL_STATE": 6,
+          "INPUT_SPIKE": 1,
+          "PREDICTION_CONFIRMED": 3,
+          "REFRACTORY_ENTER": 6,
+          "REFRACTORY_RELEASE": 6,
+          "RESET": 6,
+          "SPIKE": 6
+        }
+      },
+      "graph_sha256": "42d27b56db00392989e678955fa9174b10c3f63bb701f275c8f6388a62089d5e",
+      "name": "mixed_chain_6",
+      "t_end": "0x1.0000000000000p+5"
+    },
+    {
+      "absolute_tolerance": "0x1.b7cdfd9d7bdbbp-34",
+      "case_sha256": "148f59d1b11eede64457c58b72d4f4cfb25612d845e6c4977e6dde1926077e4d",
+      "expected": {
+        "decoded": [
+          {
+            "count": 1,
+            "first_spike": "0x0.0p+0",
+            "node": 0,
+            "port": "first",
+            "valid": true,
+            "value": "0x0.0p+0",
+            "window": 0,
+            "window_end": "0x1.0000000000000p+2",
+            "window_start": "0x0.0p+0"
+          },
+          {
+            "count": 2,
+            "first_spike": "0x0.0p+0",
+            "node": 0,
+            "port": "rate",
+            "valid": true,
+            "value": "0x1.0000000000000p-1",
+            "window": 0,
+            "window_end": "0x1.0000000000000p+2",
+            "window_start": "0x0.0p+0"
+          }
+        ],
+        "decoded_events": [
+          {
+            "count": 1,
+            "emitted_at": "0x0.0p+0",
+            "first_spike": "0x0.0p+0",
+            "kind": "FINAL",
+            "node": 0,
+            "observed_through": "0x0.0p+0",
+            "port": "first",
+            "source_spike_time": "0x0.0p+0",
+            "valid": true,
+            "value": "0x0.0p+0",
+            "window": 0
+          },
+          {
+            "count": 2,
+            "emitted_at": "0x1.0000000000000p+2",
+            "first_spike": "0x0.0p+0",
+            "kind": "FINAL",
+            "node": 0,
+            "observed_through": "0x1.0000000000000p+2",
+            "port": "rate",
+            "source_spike_time": null,
+            "valid": true,
+            "value": "0x1.0000000000000p-1",
+            "window": 0
+          }
+        ],
+        "spikes": [
+          {
+            "node": 0,
+            "t": "0x0.0p+0"
+          },
+          {
+            "node": 0,
+            "t": "0x1.0000000000000p+1"
+          }
+        ],
+        "states": [
+          {
+            "node": 0,
+            "t": "0x1.0000000000000p+2",
+            "values": [
+              "-0x1.0400000000000p+6"
+            ]
+          }
+        ],
+        "stats": {
+          "autonomous_spikes_confirmed": 0,
+          "deliveries_processed": 0,
+          "deliveries_scheduled": 0,
+          "drive_updates_processed": 0,
+          "events_popped": 5,
+          "input_spikes_processed": 3,
+          "max_same_time_cascade_depth": 1,
+          "output_spikes": 2,
+          "peak_queue_occupancy": 1,
+          "refractory_releases_processed": 2,
+          "stale_predictions": 0
+        },
+        "trace_kind_counts": {
+          "DEPOSIT_APPLY": 3,
+          "FINAL_STATE": 1,
+          "INPUT_SPIKE": 3,
+          "REFRACTORY_ENTER": 2,
+          "REFRACTORY_RELEASE": 2,
+          "RESET": 2,
+          "SPIKE": 2
+        }
+      },
+      "graph_sha256": "4e53f672202bb9b92502ceae7c5e0c7c25798d425628f782d48b568881e03fa5",
+      "name": "streaming_scalar_codec",
+      "t_end": "0x1.0000000000000p+2"
+    }
+  ],
+  "fixture_set": "lacuna-core-slice-1",
+  "schema": 1
+}
