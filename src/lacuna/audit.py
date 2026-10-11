@@ -90,6 +90,7 @@ _PHASE_BY_KIND = {
     TraceKind.REFRACTORY_ENTER: TracePhase.FIRE,
     TraceKind.FINAL_STATE: TracePhase.FINAL,
     TraceKind.MODULATION: TracePhase.BOUNDARY,
+    TraceKind.NUMERICAL_CONTINUATION: TracePhase.PREDICTION,
 }
 
 _STATEFUL_KINDS = frozenset(
@@ -544,6 +545,7 @@ def _check_accounting(
     popped = (
         sum(counts[kind] for kind, _ in comparisons[:6])
         + counts[TraceKind.MODULATION]
+        + counts[TraceKind.NUMERICAL_CONTINUATION]
     )
     if popped != stats.events_popped:
         _fail(
@@ -1149,6 +1151,7 @@ class _IncrementalTraceAuditor:
         popped = (
             sum(self.counts[kind] for kind, _ in comparisons[:6])
             + self.counts[TraceKind.MODULATION]
+            + self.counts[TraceKind.NUMERICAL_CONTINUATION]
         )
         if popped != stats.events_popped:
             _fail(

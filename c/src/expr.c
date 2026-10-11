@@ -1,9 +1,11 @@
 #include "lacuna.h"
+#include "step_internal.h"
 
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Evaluate compiled equations and locate threshold crossings in continuous time. */
@@ -465,6 +467,239 @@ static int lc_step_config_valid(const lc_step_config *config) {
 
 /* The stepped path uses an adaptive Dormand-Prince trajectory. */
 
+struct lc_step_rhs_plan {
+    const lc_expr_node *source;
+    uint32_t source_count, parameter_count, state_count;
+    uint32_t source_roots[LC_ANALYTICAL_MAX_STATES];
+    lc_expr_node *nodes;
+    uint32_t node_count, roots[LC_ANALYTICAL_MAX_STATES];
+    lc_real_t *parameters;
+};
+
+static void lc_step_plan_release(lc_step_cache *cache) {
+    if (cache != NULL && cache->rhs_plan != NULL) {
+        free(cache->rhs_plan->nodes);
+        free(cache->rhs_plan->parameters);
+        free(cache->rhs_plan);
+        cache->rhs_plan = NULL;
+    }
+}
+
+void lc_step_cache_reset(lc_step_cache *cache) {
+    if (cache == NULL) return;
+    cache->count = 0U;
+    cache->state_count = 0U;
+    cache->resume_valid = 0U;
+    cache->end = cache->resume_time = cache->next_step = LC_TIME_C(0.0);
+}
+
+void lc_step_cache_release(lc_step_cache *cache) {
+    uint32_t i;
+    if (cache == NULL) return;
+    lc_step_plan_release(cache);
+    free(cache->storage);
+    cache->storage = cache->resume_state = cache->derivative = NULL;
+    cache->storage_states = 0U;
+    for (i = 0U; i < LC_STEP_CACHE_SEGMENTS; ++i) {
+        cache->segments[i].coefficients = NULL;
+        cache->segments[i].endpoint = NULL;
+    }
+    lc_step_cache_reset(cache);
+}
+
+static lc_status lc_step_cache_reserve(lc_step_cache *cache, uint32_t states) {
+    lc_real_t *storage, *cursor;
+    uint32_t i;
+    if (states == 0U || states > LC_ANALYTICAL_MAX_STATES) return LC_INVALID_ARGUMENT;
+    if (cache->storage != NULL && cache->storage_states == states) return LC_OK;
+    /* Size is bounded by LC_ANALYTICAL_MAX_STATES, not caller-supplied bytes. */
+    storage = calloc((6U * LC_STEP_CACHE_SEGMENTS + 2U) * states, sizeof(lc_real_t));
+    if (storage == NULL) return LC_ALLOCATION_FAILED;
+    lc_step_cache_reset(cache);
+    free(cache->storage);
+    cache->storage = storage;
+    cache->storage_states = states;
+    cursor = storage;
+    for (i = 0U; i < LC_STEP_CACHE_SEGMENTS; ++i) {
+        cache->segments[i].coefficients = (lc_real_t (*)[5])cursor;
+        cursor += 5U * states;
+        cache->segments[i].endpoint = cursor;
+        cursor += states;
+    }
+    cache->resume_state = cursor;
+    cache->derivative = cursor + states;
+    return LC_OK;
+}
+
+#if LACUNA_REAL_BITS == 64 && LACUNA_TIME_BITS == 64
+/* Classify and validate topology without evaluating any arithmetic. */
+static int lc_step_expr_arity(const lc_expr_node *node, uint32_t index) {
+    switch ((lc_expr_op)node->op) {
+        case LC_EXPR_CONST: case LC_EXPR_PARAM: case LC_EXPR_VAR: return 0;
+        case LC_EXPR_NEG: case LC_EXPR_EXP: case LC_EXPR_LOG:
+        case LC_EXPR_PHI1: case LC_EXPR_PHI1_DERIV: case LC_EXPR_SIN:
+        case LC_EXPR_COS: case LC_EXPR_TANH:
+            return lc_unary_ref_valid(node, index) ? 1 : -1;
+        case LC_EXPR_ADD: case LC_EXPR_SUB: case LC_EXPR_MUL: case LC_EXPR_DIV:
+        case LC_EXPR_POW: case LC_EXPR_MAX:
+            return lc_binary_refs_valid(node, index) ? 2 : -1;
+        default: return -1;
+    }
+}
+
+/* Compile only derivative dependencies, folding parameter-only subexpressions
+ * with the SAME evaluator and arithmetic order as the original program. No
+ * algebraic simplification/reassociation, approximate math, or model templates.
+ * Source programs are immutable for the lifetime of an internal step cache. */
+static lc_status lc_step_prepare_rhs_plan(
+    lc_step_cache *cache, const lc_expr_node *nodes, uint32_t node_count,
+    const lc_real_t *parameters, uint32_t parameter_count,
+    const uint32_t *roots, uint32_t state_count, uint32_t variable_count
+) {
+    lc_step_rhs_plan *old = cache->rhs_plan, *plan = NULL;
+    uint8_t *active = NULL, *constant = NULL;
+    uint32_t *mapping = NULL;
+    lc_real_t *values = NULL;
+    uint32_t i;
+    lc_status status = LC_ALLOCATION_FAILED;
+    if (node_count == 0U || (parameter_count != 0U && parameters == NULL) ||
+        (uint64_t)node_count * sizeof(lc_expr_node) > SIZE_MAX ||
+        (uint64_t)parameter_count * sizeof(lc_real_t) > SIZE_MAX)
+        return LC_INVALID_ARGUMENT;
+    if (old != NULL && old->source == nodes && old->source_count == node_count &&
+        old->state_count == state_count && old->parameter_count == parameter_count &&
+        memcmp(old->source_roots, roots, state_count * sizeof(uint32_t)) == 0 &&
+        (parameter_count == 0U || memcmp(old->parameters, parameters,
+                                      parameter_count * sizeof(lc_real_t)) == 0))
+        return LC_OK;
+    /* Parameters may change in place. Invalidate FSAL as well as the view. */
+    cache->resume_valid = 0U;
+    plan = calloc(1U, sizeof(*plan));
+    active = calloc(node_count, sizeof(*active));
+    constant = calloc(node_count, sizeof(*constant));
+    mapping = calloc(node_count, sizeof(*mapping));
+    values = calloc(node_count, sizeof(*values));
+    if (plan == NULL || active == NULL || constant == NULL || mapping == NULL ||
+        values == NULL) goto done;
+    plan->nodes = calloc(node_count, sizeof(*plan->nodes));
+    if (parameter_count != 0U)
+        plan->parameters = malloc(parameter_count * sizeof(*plan->parameters));
+    if (plan->nodes == NULL || (parameter_count != 0U && plan->parameters == NULL))
+        goto done;
+    status = LC_INVALID_ARGUMENT;
+    for (i = 0U; i < node_count; ++i) {
+        if (lc_step_expr_arity(&nodes[i], i) < 0 ||
+            (nodes[i].op == LC_EXPR_PARAM && nodes[i].binding >= parameter_count) ||
+            (nodes[i].op == LC_EXPR_VAR && nodes[i].binding >= variable_count)) goto done;
+    }
+    for (i = 0U; i < state_count; ++i) {
+        if (roots[i] >= node_count) goto done;
+        active[roots[i]] = 1U;
+    }
+    for (i = node_count; i-- > 0U;) {
+        int arity = lc_step_expr_arity(&nodes[i], i);
+        if (!active[i]) continue;
+        if (arity >= 1) active[nodes[i].lhs] = 1U;
+        if (arity == 2) active[nodes[i].rhs] = 1U;
+    }
+    for (i = 0U; i < node_count; ++i) {
+        int arity = lc_step_expr_arity(&nodes[i], i);
+        if (!active[i]) continue;
+        constant[i] = nodes[i].op != LC_EXPR_VAR &&
+            (arity == 0 || (constant[nodes[i].lhs] &&
+                           (arity == 1 || constant[nodes[i].rhs])));
+    }
+    /* No variables are evaluated by this mask. Preserve all finite/domain
+     * checks for the cached expressions; dynamic expressions keep theirs. */
+    status = lc_expr_evaluate_active(nodes, node_count, parameters, parameter_count,
+        NULL, 0U, values, node_count, constant);
+    if (status != LC_OK) goto done;
+    /* Folded expressions terminate dependency walks. Remove their now-unused
+     * operands, retaining original topological order for every live operation. */
+    memset(active, 0, node_count * sizeof(*active));
+    for (i = 0U; i < state_count; ++i) active[roots[i]] = 1U;
+    for (i = node_count; i-- > 0U;) {
+        int arity = lc_step_expr_arity(&nodes[i], i);
+        if (!active[i] || constant[i]) continue;
+        if (arity >= 1) active[nodes[i].lhs] = 1U;
+        if (arity == 2) active[nodes[i].rhs] = 1U;
+    }
+    for (i = 0U; i < node_count; ++i) {
+        lc_expr_node *destination;
+        int arity;
+        if (!active[i]) continue;
+        mapping[i] = plan->node_count++;
+        destination = &plan->nodes[mapping[i]];
+        if (constant[i]) {
+            destination->op = LC_EXPR_CONST;
+            destination->value = values[i];
+        } else {
+            *destination = nodes[i];
+            arity = lc_step_expr_arity(&nodes[i], i);
+            if (arity >= 1) destination->lhs = mapping[nodes[i].lhs];
+            if (arity == 2) destination->rhs = mapping[nodes[i].rhs];
+        }
+    }
+    for (i = 0U; i < state_count; ++i) plan->roots[i] = mapping[roots[i]];
+    memcpy(plan->source_roots, roots, state_count * sizeof(uint32_t));
+    if (parameter_count != 0U)
+        memcpy(plan->parameters, parameters, parameter_count * sizeof(lc_real_t));
+    plan->source = nodes; plan->source_count = node_count;
+    plan->parameter_count = parameter_count; plan->state_count = state_count;
+    lc_step_plan_release(cache);
+    cache->rhs_plan = plan;
+    plan = NULL;
+    status = LC_OK;
+done:
+    if (plan != NULL) {
+        free(plan->nodes); free(plan->parameters); free(plan);
+    }
+    free(active); free(constant); free(mapping); free(values);
+    return status;
+}
+#endif
+
+/* Only internally owned, structurally validated derivative plans enter here.
+ * This uses the same operations as lc_expr_evaluate_active, in the same order.
+ * Bindings/references are immutable; value-dependent guards are NOT omitted.
+ * Parameter leaves have already been folded by lc_step_prepare_rhs_plan. */
+static lc_status lc_step_evaluate_validated(
+    const lc_expr_node *nodes, uint32_t node_count,
+    const lc_real_t *variables, lc_real_t *workspace
+) {
+    uint32_t i;
+    for (i = 0U; i < node_count; ++i) {
+        const lc_expr_node *node = &nodes[i];
+        lc_real_t value;
+        switch ((lc_expr_op)node->op) {
+            case LC_EXPR_CONST: value = node->value; break;
+            case LC_EXPR_VAR: value = variables[node->binding]; break;
+            case LC_EXPR_NEG: value = -workspace[node->lhs]; break;
+            case LC_EXPR_ADD: value = workspace[node->lhs] + workspace[node->rhs]; break;
+            case LC_EXPR_SUB: value = workspace[node->lhs] - workspace[node->rhs]; break;
+            case LC_EXPR_MUL: value = workspace[node->lhs] * workspace[node->rhs]; break;
+            case LC_EXPR_DIV:
+                if (workspace[node->rhs] == LC_REAL_C(0.0)) return LC_NUMERIC_ERROR;
+                value = workspace[node->lhs] / workspace[node->rhs]; break;
+            case LC_EXPR_POW: value = lc_real_pow(workspace[node->lhs], workspace[node->rhs]); break;
+            case LC_EXPR_EXP: value = lc_real_exp(workspace[node->lhs]); break;
+            case LC_EXPR_LOG:
+                if (workspace[node->lhs] <= LC_REAL_C(0.0)) return LC_NUMERIC_ERROR;
+                value = lc_real_log(workspace[node->lhs]); break;
+            case LC_EXPR_PHI1: value = lc_phi1(workspace[node->lhs]); break;
+            case LC_EXPR_PHI1_DERIV: value = lc_phi1_derivative(workspace[node->lhs]); break;
+            case LC_EXPR_SIN: value = lc_real_sin(workspace[node->lhs]); break;
+            case LC_EXPR_COS: value = lc_real_cos(workspace[node->lhs]); break;
+            case LC_EXPR_TANH: value = lc_real_tanh(workspace[node->lhs]); break;
+            case LC_EXPR_MAX: value = lc_real_fmax(workspace[node->lhs], workspace[node->rhs]); break;
+            default: return LC_INVALID_ARGUMENT;
+        }
+        if (!lc_isfinite(value)) return LC_NUMERIC_ERROR;
+        workspace[i] = value;
+    }
+    return LC_OK;
+}
+
 static lc_status lc_step_rhs(
     const lc_expr_node *nodes,
     uint32_t node_count,
@@ -480,14 +715,16 @@ static lc_status lc_step_rhs(
     lc_real_t *variables,
     uint32_t variable_count,
     lc_real_t *workspace,
-    uint32_t workspace_count
+    uint32_t workspace_count,
+    uint32_t validated
 ) {
     uint32_t index;
     lc_status status;
-    if (nodes == NULL || rhs_roots == NULL || state == NULL || derivative == NULL ||
+    if (!lc_isfinite(t)) return LC_INVALID_ARGUMENT;
+    if (!validated && (nodes == NULL || rhs_roots == NULL || state == NULL || derivative == NULL ||
         variables == NULL || workspace == NULL || state_count == 0U ||
         state_count > LC_ANALYTICAL_MAX_STATES || readout >= state_count ||
-        variable_count != state_count + 1U || !lc_isfinite(t) || clamped > 1U) {
+        variable_count != state_count + 1U || clamped > 1U)) {
         return LC_INVALID_ARGUMENT;
     }
     variables[0] = (lc_real_t)t;
@@ -503,12 +740,12 @@ static lc_status lc_step_rhs(
     }
 #endif
     for (index = 0U; index < state_count; ++index) {
-        if (rhs_roots[index] >= node_count || !lc_isfinite(state[index])) {
+        if ((!validated && rhs_roots[index] >= node_count) || !lc_isfinite(state[index])) {
             return LC_INVALID_ARGUMENT;
         }
         variables[index + 1U] = state[index];
     }
-    status = lc_expr_evaluate(
+    status = validated ? lc_step_evaluate_validated(nodes, node_count, variables, workspace) : lc_expr_evaluate(
         nodes, node_count, parameters, parameter_count, variables, variable_count,
         workspace, workspace_count
     );
@@ -694,26 +931,12 @@ static uint32_t lc_step_dense_extrema(
     return extremum_count;
 }
 
-/* Isolate the first rising crossing across monotone dense-output intervals. */
-static int lc_step_find_rising_crossing(
-    lc_real_t y0,
-    lc_time_t h,
-    const lc_real_t k[7],
-    lc_real_t threshold,
-    lc_time_t time_tolerance,
-    lc_real_t *theta,
-    uint32_t *iterations
+/* The same Dormand-Prince dense polynomial serves crossing and state readback. */
+static void lc_step_dense_coefficients(
+    lc_real_t y0, lc_time_t h, const lc_real_t k[7], lc_real_t coefficients[5]
 ) {
     lc_real_t model_h = (lc_real_t)h;
-    lc_real_t coefficients[5];
-    lc_real_t extrema[3] = {LC_REAL_C(0.0), LC_REAL_C(0.0), LC_REAL_C(0.0)};
-    lc_real_t partition[5] = {LC_REAL_C(0.0), LC_REAL_C(1.0), LC_REAL_C(0.0), LC_REAL_C(0.0), LC_REAL_C(0.0)};
-    uint32_t extrema_count;
-    uint32_t count = 2U;
-    uint32_t index;
-
-    *iterations = 0U;
-    coefficients[0] = y0 - threshold;
+    coefficients[0] = y0;
     coefficients[1] = model_h * k[0];
     coefficients[2] = model_h * (
         (-LC_REAL_RATIO(8048581381.0, 2820520608.0)) * k[0] +
@@ -739,6 +962,52 @@ static int lc_step_find_rising_crossing(
         (LC_REAL_RATIO(1453857185.0, 822651844.0)) * k[5] +
         (LC_REAL_RATIO(69997945.0, 29380423.0)) * k[6]
     );
+}
+
+int lc_step_cache_sample(const lc_step_cache *cache, lc_time_t t,
+                         lc_real_t *values, uint32_t state_count) {
+    uint32_t i, j;
+    lc_real_t sampled[LC_ANALYTICAL_MAX_STATES];
+    if (cache == NULL || cache->count == 0U || values == NULL ||
+        cache->count > LC_STEP_CACHE_SEGMENTS ||
+        state_count > LC_ANALYTICAL_MAX_STATES ||
+        state_count != cache->state_count || t > cache->end ||
+        t < cache->segments[0].start || !lc_isfinite(t)) return 0;
+    for (i = 0U; i < cache->count; ++i) {
+        const lc_step_segment *s = &cache->segments[i];
+        lc_time_t end = s->start + s->step;
+        if (t > end) continue;
+        for (j = 0U; j < state_count; ++j) {
+            sampled[j] = t == end ? s->endpoint[j] :
+                lc_step_polynomial_value(s->coefficients[j],
+                    (lc_real_t)((t - s->start) / s->step));
+            if (!lc_isfinite(sampled[j])) return 0;
+        }
+        for (j = 0U; j < state_count; ++j) values[j] = sampled[j];
+        return 1;
+    }
+    return 0;
+}
+
+/* Isolate the first rising crossing across monotone dense-output intervals. */
+static int lc_step_find_rising_crossing(
+    lc_real_t y0, lc_time_t h, const lc_real_t k[7], lc_real_t threshold,
+    lc_time_t time_tolerance, lc_real_t *theta, uint32_t *iterations,
+    const lc_real_t *cached_coefficients
+) {
+    lc_real_t coefficients[5];
+    lc_real_t extrema[3] = {LC_REAL_C(0.0), LC_REAL_C(0.0), LC_REAL_C(0.0)};
+    lc_real_t partition[5] = {LC_REAL_C(0.0), LC_REAL_C(1.0), LC_REAL_C(0.0), LC_REAL_C(0.0), LC_REAL_C(0.0)};
+    uint32_t extrema_count, count = 2U, index;
+    *iterations = 0U;
+    if (cached_coefficients != NULL) {
+        memcpy(coefficients, cached_coefficients, sizeof(coefficients));
+        /* Only the constant term differs. Keep exactly the original subtraction
+         * and polynomial/root arithmetic, not polynomial(theta)-threshold. */
+        coefficients[0] = y0 - threshold;
+    } else {
+        lc_step_dense_coefficients(y0 - threshold, h, k, coefficients);
+    }
 #if LACUNA_REAL_BITS <= 32
     for (index = 0U; index < 5U; ++index) {
         if (!lc_isfinite(coefficients[index])) {
@@ -814,7 +1083,8 @@ static lc_status lc_expr_step_integrate(
     uint32_t variable_count,
     lc_real_t *workspace,
     uint32_t workspace_count,
-    lc_step_result *result
+    lc_step_result *result,
+    lc_step_cache *cache
 ) {
     lc_real_t y[LC_ANALYTICAL_MAX_STATES];
     lc_real_t trial[LC_ANALYTICAL_MAX_STATES];
@@ -829,6 +1099,9 @@ static lc_status lc_expr_step_integrate(
     lc_time_t current = t_start;
     lc_time_t step;
     uint32_t index;
+    uint32_t reuse = 0U, derivative_valid = 0U;
+    uint32_t validated_rhs;
+    lc_time_t suggested_step;
     lc_status status;
 
     if (!lc_step_config_valid(config) || nodes == NULL || rhs_roots == NULL ||
@@ -839,9 +1112,32 @@ static lc_status lc_expr_step_integrate(
         !lc_isfinite(threshold) || clamped > 1U || detect_crossing > 1U) {
         return LC_INVALID_ARGUMENT;
     }
+    validated_rhs = cache != NULL && !cache->disable_validated_rhs &&
+        cache->rhs_plan != NULL && nodes == cache->rhs_plan->nodes &&
+        node_count == cache->rhs_plan->node_count && rhs_roots == cache->rhs_plan->roots;
+    if (validated_rhs && (workspace_count < node_count ||
+        (parameter_count > 0U && parameters == NULL))) return LC_INVALID_ARGUMENT;
     memset(result, 0, sizeof(*result));
     result->t_reached = t_start;
     result->t_crossing = NAN;
+    suggested_step = config->initial_step;
+#if LACUNA_REAL_BITS == 64 && LACUNA_TIME_BITS == 64
+    reuse = cache != NULL && !cache->disable_reuse && !clamped;
+    if (reuse && cache->resume_valid && cache->state_count == state_count &&
+        cache->resume_time == t_start && lc_isfinite(cache->next_step) &&
+        cache->next_step > LC_TIME_C(0.0) &&
+        memcmp(cache->resume_state, state, state_count * sizeof(lc_real_t)) == 0) {
+        suggested_step = cache->next_step;
+        memcpy(k1, cache->derivative, state_count * sizeof(lc_real_t));
+        derivative_valid = 1U;
+    }
+#endif
+    if (cache != NULL) {
+        cache->resume_valid = 0U;
+        cache->count = 0U;
+        cache->state_count = state_count;
+        cache->end = t_start;
+    }
     for (index = 0U; index < state_count; ++index) {
         if (!lc_isfinite(state[index]) || rhs_roots[index] >= node_count) {
             return LC_INVALID_ARGUMENT;
@@ -854,7 +1150,7 @@ static lc_status lc_expr_step_integrate(
     if (t_end == t_start) {
         return detect_crossing != 0U ? LC_NO_CROSSING : LC_OK;
     }
-    step = lc_time_fmin(config->initial_step, lc_time_fmin(config->maximum_step, t_end - current));
+    step = lc_time_fmin(suggested_step, lc_time_fmin(config->maximum_step, t_end - current));
 #if LACUNA_REAL_BITS == 16
     /* Start on the next clock value if the preferred initial step is smaller. */
     {
@@ -871,10 +1167,11 @@ static lc_status lc_expr_step_integrate(
         lc_real_t error_norm = LC_REAL_C(0.0);
         lc_real_t factor;
         lc_time_t remaining = t_end - current;
+        uint32_t trial_rhs = derivative_valid ? 6U : 7U;
         if (result->accepted_steps + result->rejected_steps >= config->maximum_steps) {
             return LC_STEP_LIMIT;
         }
-        if (config->maximum_rhs_evaluations - result->rhs_evaluations < 7U) {
+        if (config->maximum_rhs_evaluations - result->rhs_evaluations < trial_rhs) {
             return LC_RHS_EVALUATION_LIMIT;
         }
         step = lc_time_fmin(step, remaining);
@@ -895,18 +1192,21 @@ static lc_status lc_expr_step_integrate(
             return LC_NUMERIC_ERROR;
         }
 
-        status = lc_step_rhs(
-            nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
-            readout, current, y, clamped, k1, variables, variable_count,
-            workspace, workspace_count
-        );
-        if (status != LC_OK) return status;
+        if (!derivative_valid) {
+            status = lc_step_rhs(
+                nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
+                readout, current, y, clamped, k1, variables, variable_count,
+                workspace, workspace_count, validated_rhs
+            );
+            if (status != LC_OK) return status;
+            derivative_valid = reuse;
+        }
         for (index = 0U; index < state_count; ++index)
             trial[index] = y[index] + model_step * (LC_REAL_RATIO(1.0, 5.0)) * k1[index];
         status = lc_step_rhs(
             nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
             readout, current + step * (LC_REAL_RATIO(1.0, 5.0)), trial, clamped, k2,
-            variables, variable_count, workspace, workspace_count
+            variables, variable_count, workspace, workspace_count, validated_rhs
         );
         if (status != LC_OK) {
 #if LACUNA_REAL_BITS <= 32
@@ -923,7 +1223,7 @@ static lc_status lc_expr_step_integrate(
         status = lc_step_rhs(
             nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
             readout, current + step * (LC_REAL_RATIO(3.0, 10.0)), trial, clamped, k3,
-            variables, variable_count, workspace, workspace_count
+            variables, variable_count, workspace, workspace_count, validated_rhs
         );
         if (status != LC_OK) {
 #if LACUNA_REAL_BITS <= 32
@@ -940,7 +1240,7 @@ static lc_status lc_expr_step_integrate(
         status = lc_step_rhs(
             nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
             readout, current + step * (LC_REAL_RATIO(4.0, 5.0)), trial, clamped, k4,
-            variables, variable_count, workspace, workspace_count
+            variables, variable_count, workspace, workspace_count, validated_rhs
         );
         if (status != LC_OK) {
 #if LACUNA_REAL_BITS <= 32
@@ -958,7 +1258,7 @@ static lc_status lc_expr_step_integrate(
         status = lc_step_rhs(
             nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
             readout, current + step * (LC_REAL_RATIO(8.0, 9.0)), trial, clamped, k5,
-            variables, variable_count, workspace, workspace_count
+            variables, variable_count, workspace, workspace_count, validated_rhs
         );
         if (status != LC_OK) {
 #if LACUNA_REAL_BITS <= 32
@@ -976,7 +1276,7 @@ static lc_status lc_expr_step_integrate(
         status = lc_step_rhs(
             nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
             readout, current + step, trial, clamped, k6, variables,
-            variable_count, workspace, workspace_count
+            variable_count, workspace, workspace_count, validated_rhs
         );
         if (status != LC_OK) {
 #if LACUNA_REAL_BITS <= 32
@@ -994,7 +1294,7 @@ static lc_status lc_expr_step_integrate(
         status = lc_step_rhs(
             nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
             readout, current + step, trial, clamped, k7, variables,
-            variable_count, workspace, workspace_count
+            variable_count, workspace, workspace_count, validated_rhs
         );
         if (status != LC_OK) {
 #if LACUNA_REAL_BITS <= 32
@@ -1005,7 +1305,7 @@ static lc_status lc_expr_step_integrate(
 #endif
             return status;
         }
-        result->rhs_evaluations += 7U;
+        result->rhs_evaluations += trial_rhs;
 
         for (index = 0U; index < state_count; ++index) {
             lc_real_t scale;
@@ -1031,6 +1331,18 @@ static lc_status lc_expr_step_integrate(
         result->error_norm = error_norm;
         result->last_step = step;
         if (error_norm <= LC_REAL_C(1.0)) {
+            if (cache != NULL) {
+                lc_step_segment *s = &cache->segments[cache->count++];
+                s->start = current; s->step = step;
+                for (index = 0U; index < state_count; ++index) {
+                    lc_real_t derivatives[7] = {k1[index], k2[index], k3[index],
+                        k4[index], k5[index], k6[index], k7[index]};
+                    lc_step_dense_coefficients(y[index], step, derivatives,
+                                                s->coefficients[index]);
+                    s->endpoint[index] = trial[index];
+                }
+                cache->end = current + step;
+            }
             if (detect_crossing != 0U) {
                 int crossing_found;
                 lc_real_t crossing_theta;
@@ -1042,7 +1354,8 @@ static lc_status lc_expr_step_integrate(
                 crossing_found = lc_step_find_rising_crossing(
                         y[readout], step, readout_derivatives, threshold,
                         config->event_tolerance, &crossing_theta,
-                        &event_iterations);
+                        &event_iterations, cache == NULL ? NULL :
+                            cache->segments[cache->count - 1U].coefficients[readout]);
                 if (crossing_found < 0) {
                     return LC_ROOT_NONCONVERGENCE;
                 }
@@ -1058,6 +1371,10 @@ static lc_status lc_expr_step_integrate(
                     }
 #endif
                     result->t_reached = result->t_crossing;
+                    if (cache != NULL) {
+                        cache->end = result->t_crossing;
+                        cache->resume_valid = 0U;
+                    }
                     return LC_OK;
                 }
                 result->event_iterations += event_iterations;
@@ -1072,6 +1389,21 @@ static lc_status lc_expr_step_integrate(
                 ? LC_REAL_C(5.0)
                 : lc_real_fmin(LC_REAL_C(5.0), lc_real_fmax(LC_REAL_C(0.2), LC_REAL_C(0.9) * lc_real_pow(error_norm, -LC_REAL_C(0.2))));
             step = lc_time_fmin(config->maximum_step, step * factor);
+            if (reuse) {
+                /* Dormand-Prince's last stage is f(t_new, y_accepted). It is
+                 * not valid at an interpolated crossing or interrupted step. */
+                memcpy(k1, k7, state_count * sizeof(lc_real_t));
+                derivative_valid = 1U;
+                cache->resume_valid = 1U;
+                cache->resume_time = current;
+                cache->next_step = step;
+                memcpy(cache->resume_state, y, state_count * sizeof(lc_real_t));
+                memcpy(cache->derivative, k7, state_count * sizeof(lc_real_t));
+            }
+            /* A full cache is a continuation boundary, not an integration error. */
+            if (cache != NULL && cache->count == LC_STEP_CACHE_SEGMENTS) {
+                return LC_NO_CROSSING;
+            }
         } else {
             result->rejected_steps++;
             factor = lc_real_fmin(LC_REAL_C(0.5), lc_real_fmax(LC_REAL_C(0.1), LC_REAL_C(0.9) * lc_real_pow(error_norm, -LC_REAL_C(0.2))));
@@ -1131,7 +1463,7 @@ lc_status lc_expr_step_advance(
     status = lc_expr_step_integrate(
         nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
         readout, LC_REAL_C(0.0), config, state, *t_last, t, clamped, 0U, variables,
-        variable_count, workspace, workspace_count, result
+        variable_count, workspace, workspace_count, result, NULL
     );
     if (status == LC_OK) {
         *t_last = t;
@@ -1171,9 +1503,124 @@ lc_status lc_expr_step_predict(
     return lc_expr_step_integrate(
         nodes, node_count, parameters, parameter_count, rhs_roots, state_count,
         readout, threshold, config, copy, t_last, horizon, 0U, 1U, variables,
-        variable_count, workspace, workspace_count, result
+        variable_count, workspace, workspace_count, result, NULL
     );
 }
+
+lc_status lc_expr_step_predict_cached(
+    const lc_expr_node *nodes, uint32_t node_count,
+    const lc_real_t *parameters, uint32_t parameter_count,
+    const uint32_t *rhs_roots, uint32_t state_count, uint32_t readout,
+    lc_real_t threshold, const lc_step_config *config, const lc_real_t *state,
+    lc_time_t t_last, lc_time_t horizon, lc_real_t *variables,
+    uint32_t variable_count, lc_real_t *workspace, uint32_t workspace_count,
+    lc_step_result *result, lc_step_cache *cache
+) {
+    lc_real_t copy[LC_ANALYTICAL_MAX_STATES];
+    lc_status reserve_status;
+    if (cache == NULL || state == NULL || state_count == 0U ||
+        state_count > LC_ANALYTICAL_MAX_STATES) return LC_INVALID_ARGUMENT;
+    reserve_status = lc_step_cache_reserve(cache, state_count);
+    if (reserve_status != LC_OK) return reserve_status;
+#if LACUNA_REAL_BITS == 64 && LACUNA_TIME_BITS == 64
+    if (!cache->disable_rhs_plan && !cache->disable_reuse) {
+        lc_status status;
+        if (nodes == NULL || rhs_roots == NULL || workspace_count < node_count ||
+            variable_count != state_count + 1U) return LC_INVALID_ARGUMENT;
+        status = lc_step_prepare_rhs_plan(cache, nodes, node_count, parameters,
+            parameter_count, rhs_roots, state_count, variable_count);
+        if (status != LC_OK) return status;
+        nodes = cache->rhs_plan->nodes;
+        node_count = cache->rhs_plan->node_count;
+        rhs_roots = cache->rhs_plan->roots;
+    }
+#endif
+    memcpy(copy, state, state_count * sizeof(lc_real_t));
+    return lc_expr_step_integrate(nodes, node_count, parameters, parameter_count,
+        rhs_roots, state_count, readout, threshold, config, copy, t_last, horizon,
+        0U, 1U, variables, variable_count, workspace, workspace_count, result, cache);
+}
+
+static lc_status lc_step_replay_policy(
+    const lc_expr_node *nodes, uint32_t node_count,
+    const lc_real_t *parameters, uint32_t parameter_count,
+    const uint32_t *rhs_roots, uint32_t state_count, uint32_t readout,
+    const lc_step_config *config, lc_real_t *state, lc_time_t *t_last,
+    lc_time_t t, uint32_t clamped, lc_real_t *variables, uint32_t variable_count,
+    lc_real_t *workspace, uint32_t workspace_count, lc_step_result *result,
+    lc_real_t threshold, lc_time_t horizon, uint32_t enable_reuse
+) {
+    if (t_last == NULL || result == NULL || !lc_isfinite(horizon) ||
+        !lc_isfinite(t) || horizon < t || t < *t_last) return LC_INVALID_ARGUMENT;
+#if LACUNA_REAL_BITS == 64 && LACUNA_TIME_BITS == 64
+    if (!clamped && t > *t_last) {
+        lc_step_cache cache = {0};
+        lc_status replay_status = LC_OK;
+        cache.disable_reuse = !enable_reuse;
+        if (!lc_step_config_valid(config)) return LC_INVALID_ARGUMENT;
+        memset(result, 0, sizeof(*result));
+        while (*t_last < t) {
+            lc_step_result part;
+            lc_time_t end = lc_time_fmin(horizon, *t_last + config->maximum_step);
+            lc_time_t sample;
+            lc_status status;
+            if (!(end > *t_last)) { replay_status = LC_NUMERIC_ERROR; break; }
+            status = lc_expr_step_predict_cached(nodes, node_count, parameters,
+                parameter_count, rhs_roots, state_count, readout, threshold,
+                config, state, *t_last, end, variables, variable_count, workspace,
+                workspace_count, &part, &cache);
+            if (status != LC_OK && status != LC_NO_CROSSING) {
+                replay_status = status; break;
+            }
+            /* A missing reset anchor cannot be replayed through a crossing. */
+            if (status == LC_OK && part.t_crossing < t) {
+                replay_status = LC_INVALID_ARGUMENT; break;
+            }
+            sample = lc_time_fmin(t, part.t_reached);
+            if (!(sample > *t_last) ||
+                !lc_step_cache_sample(&cache, sample, state, state_count)) {
+                replay_status = LC_NUMERIC_ERROR; break;
+            }
+            *t_last = sample;
+            result->t_reached = sample;
+            result->accepted_steps += part.accepted_steps;
+            result->rejected_steps += part.rejected_steps;
+            result->rhs_evaluations += part.rhs_evaluations;
+            result->event_iterations += part.event_iterations;
+            result->last_step = part.last_step;
+            result->error_norm = part.error_norm;
+            result->t_crossing = part.t_crossing;
+        }
+        lc_step_cache_release(&cache);
+        return replay_status;
+    }
+#else
+    (void)threshold;
+    (void)enable_reuse;
+#endif
+    return lc_expr_step_advance(nodes, node_count, parameters, parameter_count,
+        rhs_roots, state_count, readout, config, state, t_last, t, clamped,
+        variables, variable_count, workspace, workspace_count, result);
+}
+
+#define LC_REPLAY_ARGS const lc_expr_node *nodes, uint32_t node_count, \
+    const lc_real_t *parameters, uint32_t parameter_count, \
+    const uint32_t *rhs_roots, uint32_t state_count, uint32_t readout, \
+    const lc_step_config *config, lc_real_t *state, lc_time_t *t_last, \
+    lc_time_t t, uint32_t clamped, lc_real_t *variables, uint32_t variable_count, \
+    lc_real_t *workspace, uint32_t workspace_count, lc_step_result *result, \
+    lc_real_t threshold, lc_time_t horizon
+#define LC_REPLAY_PASS nodes, node_count, parameters, parameter_count, rhs_roots, \
+    state_count, readout, config, state, t_last, t, clamped, variables, \
+    variable_count, workspace, workspace_count, result, threshold, horizon
+lc_status lc_expr_step_replay(LC_REPLAY_ARGS) {
+    return lc_step_replay_policy(LC_REPLAY_PASS, 0U);
+}
+lc_status lc_expr_step_replay_v2(LC_REPLAY_ARGS) {
+    return lc_step_replay_policy(LC_REPLAY_PASS, 1U);
+}
+#undef LC_REPLAY_ARGS
+#undef LC_REPLAY_PASS
 
 /* Invert the stable scalar affine trajectory with a logarithm. */
 lc_status lc_expr_scalar_log_predict(
