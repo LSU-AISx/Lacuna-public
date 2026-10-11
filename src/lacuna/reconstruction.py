@@ -436,6 +436,15 @@ class TraceReconstructor:
         names = first.names
         model = self.resolved.models[index]
         initial = self.resolved.initial_values[index]
+        prediction_horizon = None
+        numerical_policy = self.reader.metadata.extra.get("lacuna_numerical_execution")
+        if (isinstance(model, ResolvedSteppedNeuron) and
+            numerical_policy in ("bounded_dense_v1", "bounded_dense_v2")):
+            final_times = [r.t for r in self.reader.iter_records(nodes=(node,))
+                           if r.kind is TraceKind.FINAL_STATE]
+            if len(final_times) != 1:
+                raise ReconstructionArtifactError("bounded numerical replay requires one final state")
+            prediction_horizon = final_times[0]
         initial_values = (
             (float(initial),)
             if isinstance(initial, (int, float))
@@ -507,6 +516,8 @@ class TraceReconstructor:
                     query.t,
                     clamped=clamped,
                     parameter_bindings=bindings,
+                    prediction_horizon=prediction_horizon,
+                    prediction_reuse=numerical_policy == "bounded_dense_v2",
                 )
                 values = tuple(stepped.values[item] for item in query.selected)
                 source = ReconstructionSource.NUMERICAL_PROPAGATION

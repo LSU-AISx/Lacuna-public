@@ -65,6 +65,7 @@ The precise model boundaries and current limitations are in the
 ## Guides and examples
 
 - [Model authoring and numerical precision](docs/numerical_precision.md)
+- [Bounded numerical execution and trajectory reuse](docs/bounded_numerical_execution.md)
 - [Importing trained networks](docs/imported_networks.md)
 - [Standalone compiled-graph images](docs/compiled_graph_images.md)
 - [MNIST reward-modulated STDP example](examples/mnist_modulated_stdp.py)

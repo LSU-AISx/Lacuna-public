@@ -280,7 +280,8 @@ typedef enum lc_trace_kind {
     LC_TRACE_REFRACTORY_ENTER = 9,
     LC_TRACE_FINAL_STATE = 10,
     LC_TRACE_MODULATION = 11,
-    LC_TRACE_KIND_COUNT = 12
+    LC_TRACE_NUMERICAL_CONTINUATION = 12,
+    LC_TRACE_KIND_COUNT = 13
 } lc_trace_kind;
 
 typedef enum lc_trace_phase {
@@ -731,7 +732,8 @@ typedef enum lc_network_event_kind {
     LC_EVENT_OUTPUT_SPIKE = 5,
     LC_EVENT_DECODER_EVENT = 6,
     LC_EVENT_MODULATION = 7,
-    LC_EVENT_NONE = 8
+    LC_EVENT_NONE = 8,
+    LC_EVENT_NUMERICAL_CONTINUATION = 9
 } lc_network_event_kind;
 
 typedef enum lc_network_event_phase {
@@ -1424,6 +1426,31 @@ LC_API lc_status lc_expr_step_advance(
     lc_real_t *workspace,
     uint32_t workspace_count,
     lc_step_result *result
+);
+
+/* Replay bounded network prediction/dense output from an event anchor to t.
+ * horizon is the original simulation end, not the requested sample time.
+ * There must be no reset, deposit or parameter change between the anchor and t.
+ * Reduced-precision and clamped nodes use the ordinary advance path. */
+LC_API lc_status lc_expr_step_replay(
+    const lc_expr_node *nodes, uint32_t node_count,
+    const lc_real_t *parameters, uint32_t parameter_count,
+    const uint32_t *rhs_roots, uint32_t state_count, uint32_t readout,
+    const lc_step_config *config, lc_real_t *state, lc_time_t *t_last,
+    lc_time_t t, uint32_t clamped, lc_real_t *variables, uint32_t variable_count,
+    lc_real_t *workspace, uint32_t workspace_count, lc_step_result *result,
+    lc_real_t threshold, lc_time_t horizon
+);
+
+/* The v2 replay policy preserves adaptive step size and FSAL derivatives. */
+LC_API lc_status lc_expr_step_replay_v2(
+    const lc_expr_node *nodes, uint32_t node_count,
+    const lc_real_t *parameters, uint32_t parameter_count,
+    const uint32_t *rhs_roots, uint32_t state_count, uint32_t readout,
+    const lc_step_config *config, lc_real_t *state, lc_time_t *t_last,
+    lc_time_t t, uint32_t clamped, lc_real_t *variables, uint32_t variable_count,
+    lc_real_t *workspace, uint32_t workspace_count, lc_step_result *result,
+    lc_real_t threshold, lc_time_t horizon
 );
 
 /* Predict the first rising fixed-threshold crossing without mutating state. */

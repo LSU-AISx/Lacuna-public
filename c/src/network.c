@@ -1,5 +1,6 @@
 #include "lacuna.h"
 #include "network_internal.h"
+#include "step_internal.h"
 
 #include <float.h>
 #include <math.h>
@@ -405,7 +406,39 @@ typedef struct lc_node_runtime {
     lc_real_t hazard_remaining;
     uint64_t hazard_draw_index;
     int hazard_initialized;
+    lc_step_cache *step_cache;
+    uint64_t cache_generation;
 } lc_node_runtime;
+
+/* Only numerical nodes allocate histories. Release when destroying runtime. */
+static void lc_runtime_clear_caches(lc_node_runtime *runtime, uint32_t count) {
+    uint32_t node;
+    if (runtime == NULL) return;
+    for (node = 0U; node < count; ++node) {
+        lc_step_cache_release(runtime[node].step_cache);
+        free(runtime[node].step_cache);
+        runtime[node].step_cache = NULL;
+    }
+}
+
+/* Run initialization/reset discards all logical state, not reusable buffers.
+ * Plans own their constants and recheck parameter bindings before use. */
+static void lc_runtime_reset_caches(lc_node_runtime *runtime, uint32_t count) {
+    uint32_t node;
+    for (node = 0U; node < count; ++node) {
+        lc_step_cache *cache = runtime[node].step_cache;
+        lc_step_cache_reset(cache);
+        memset(&runtime[node], 0, sizeof(runtime[node]));
+        runtime[node].step_cache = cache;
+    }
+}
+
+static int lc_runtime_sample_cache(const lc_node_runtime *runtime,
+                                  lc_time_t t, lc_real_t *state,
+                                  uint32_t state_count) {
+    return !runtime->clamped && runtime->cache_generation == runtime->generation &&
+        lc_step_cache_sample(runtime->step_cache, t, state, state_count);
+}
 
 /*
  * Operation-specific expression views for the equation-derived executor.
@@ -1536,7 +1569,11 @@ static lc_status lc_mixed_capture_inspection(
         );
     } else if (descriptor->dispatch == LC_STEPPED) {
         lc_step_result step_result;
-        status = lc_expr_step_advance(
+        if (request->t == sample_time || lc_runtime_sample_cache(
+                &run->runtime[request->node], request->t, sample,
+                descriptor->state_count)) {
+            status = LC_OK;
+        } else status = lc_expr_step_advance(
             descriptor->program_nodes, descriptor->program_node_count,
             descriptor->parameter_count > 0U
                 ? &run->active_parameters[descriptor->parameter_offset]
@@ -2565,6 +2602,13 @@ static lc_status lc_mixed_advance_node_planned(
     }
     if (descriptor->dispatch == LC_STEPPED) {
         lc_step_result step_result;
+        if (t < t_last[node]) return LC_TIME_REVERSED;
+        if (t == t_last[node]) return LC_OK;
+        if (lc_runtime_sample_cache(&runtime[node], t, node_state,
+                                    descriptor->state_count)) {
+            t_last[node] = t;
+            return LC_OK;
+        }
         return lc_expr_step_advance(
             descriptor->program_nodes, descriptor->program_node_count,
             descriptor->parameter_count > 0U
@@ -2638,6 +2682,7 @@ static lc_status lc_mixed_schedule_prediction_planned(
     if (runtime[node].clamped) {
         return LC_OK;
     }
+    if (t_last[node] >= config->t_end) return LC_OK;
     if (descriptor->crossing_kind == LC_CROSSING_INTEGRATED_HAZARD) {
         lc_time_t horizon = config->t_end - t_last[node];
         lc_time_t duration = NAN;
@@ -2778,6 +2823,41 @@ static lc_status lc_mixed_schedule_prediction_planned(
         }
     } else if (descriptor->crossing_kind == LC_CROSSING_NUMERICAL) {
         lc_step_result step_result;
+#if LACUNA_REAL_BITS == 64 && LACUNA_TIME_BITS == 64
+        /* Bound speculation independently of total simulation duration. A full
+         * history also ends the search early. Either case schedules a wakeup,
+         * never treats a local no-crossing certificate as a global one. */
+        lc_time_t span = descriptor->step_config.maximum_step;
+        lc_time_t horizon = lc_time_fmin(config->t_end, t_last[node] + span);
+        if (!(horizon > t_last[node])) return LC_NUMERIC_ERROR;
+        if (runtime[node].step_cache == NULL) {
+            runtime[node].step_cache = calloc(1U, sizeof(lc_step_cache));
+            if (runtime[node].step_cache == NULL) return LC_ALLOCATION_FAILED;
+        }
+        if (runtime[node].cache_generation != runtime[node].generation) {
+            runtime[node].step_cache->resume_valid = 0U;
+        }
+        runtime[node].cache_generation = runtime[node].generation;
+        status = lc_expr_step_predict_cached(
+            descriptor->program_nodes, descriptor->program_node_count,
+            descriptor->parameter_count > 0U ? &parameters[descriptor->parameter_offset] : NULL,
+            descriptor->parameter_count, descriptor->normal_roots,
+            descriptor->state_count, descriptor->readout, descriptor->threshold,
+            &descriptor->step_config, &state[descriptor->state_offset],
+            t_last[node], horizon, variables, descriptor->state_count + 1U,
+            workspace, workspace_count, &step_result, runtime[node].step_cache);
+        if (status == LC_NO_CROSSING) {
+            if (step_result.t_reached >= config->t_end) return LC_OK;
+            if (!(step_result.t_reached > t_last[node])) return LC_NUMERIC_ERROR;
+            memset(&event, 0, sizeof(event));
+            event.t = step_result.t_reached;
+            event.phase = LC_PHASE_PREDICTION;
+            event.kind = LC_EVENT_NUMERICAL_CONTINUATION;
+            event.index = node;
+            event.generation = runtime[node].generation;
+            return lc_heap_push_report(heap, event, error);
+        }
+#else
         status = lc_expr_step_predict(
             descriptor->program_nodes, descriptor->program_node_count,
             descriptor->parameter_count > 0U
@@ -2790,6 +2870,7 @@ static lc_status lc_mixed_schedule_prediction_planned(
             descriptor->state_count + 1U, workspace, workspace_count,
             &step_result
         );
+#endif
         if (status == LC_OK) {
             t_spike = step_result.t_crossing;
         }
@@ -4819,6 +4900,14 @@ lc_status lc_mixed_network_run(
                 if (status != LC_OK) {
                     goto mixed_cleanup;
                 }
+                if (event.kind == LC_EVENT_NUMERICAL_CONTINUATION) {
+                    status = lc_mixed_schedule_prediction(
+                        active_nodes, state, t_last, active_parameters, runtime,
+                        event.index, config, &heap, error, variables, workspace,
+                        workspace_count);
+                    if (status != LC_OK) goto mixed_cleanup;
+                    continue;
+                }
                 fired[event.index] = 1U;
                 stats->autonomous_spikes_confirmed++;
             }
@@ -4872,6 +4961,7 @@ mixed_cleanup:
     free(heap.items);
     free(active_nodes);
     free(active_parameters);
+    lc_runtime_clear_caches(runtime, node_count);
     free(runtime);
     free(state_deposits);
     free(program_deposits);
@@ -7395,7 +7485,7 @@ lc_status lc_mixed_run_reset(
             run->learning_observers[node].t_activity = t_last[node];
         }
     }
-    memset(run->runtime, 0, graph->node_count * sizeof(lc_node_runtime));
+    lc_runtime_reset_caches(run->runtime, graph->node_count);
     memset(run->state_deposits, 0, graph->state_count * sizeof(lc_real_t));
     memset(run->program_deposits, 0, graph->node_count * sizeof(lc_real_t));
     memset(run->affected, 0, graph->node_count * sizeof(uint8_t));
@@ -7580,7 +7670,7 @@ lc_status lc_mixed_run_begin_incremental(
         run->heap_storage_capacity = config->queue_capacity;
     }
     memset(error, 0, sizeof(*error));
-    memset(run->runtime, 0, graph->node_count * sizeof(lc_node_runtime));
+    lc_runtime_reset_caches(run->runtime, graph->node_count);
     run->heap.size = 0U;
     run->heap.logical_size = 0U;
     run->heap.capacity = config->queue_capacity;
@@ -7709,7 +7799,10 @@ lc_status lc_mixed_run_reset_episode(
     }
     for (node = 0U; node < graph->node_count; ++node) {
         uint64_t hazard_draw_index = run->runtime[node].hazard_draw_index;
+        lc_step_cache *cache = run->runtime[node].step_cache;
+        lc_step_cache_reset(cache);
         memset(&run->runtime[node], 0, sizeof(lc_node_runtime));
+        run->runtime[node].step_cache = cache;
         run->runtime[node].generation = 1U;
         run->runtime[node].hazard_draw_index = hazard_draw_index;
     }
@@ -7927,7 +8020,7 @@ static lc_status lc_mixed_run_execute_internal(
         heap->capacity = config->queue_capacity;
         heap->next_seq = 0U;
         heap->peak = 0U;
-        memset(run->runtime, 0, graph->node_count * sizeof(lc_node_runtime));
+        lc_runtime_reset_caches(run->runtime, graph->node_count);
         for (node = 0; node < graph->node_count; ++node) {
             run->runtime[node].generation = 1U;
             status = lc_mixed_schedule_prediction_planned(
@@ -8573,6 +8666,19 @@ static lc_status lc_mixed_run_execute_internal(
                     if (status != LC_OK) {
                         goto compiled_cleanup;
                     }
+                    if (event.kind == LC_EVENT_NUMERICAL_CONTINUATION) {
+                        status = lc_trace_emit(trace, LC_TRACE_NUMERICAL_CONTINUATION,
+                            LC_TRACE_PHASE_PREDICTION, t, event.index, UINT32_MAX,
+                            event.generation, LC_REAL_C(0.0), NULL, NULL, 0U, error);
+                        if (status != LC_OK) goto compiled_cleanup;
+                        status = lc_mixed_schedule_prediction_planned(
+                            run->active_nodes, run->state, run->t_last,
+                            run->active_parameters, run->runtime, event.index,
+                            config, heap, error, run->variables, run->workspace,
+                            graph->workspace_count, graph->node_eval_plans);
+                        if (status != LC_OK) goto compiled_cleanup;
+                        continue;
+                    }
                     status = lc_trace_emit(
                         trace, LC_TRACE_PREDICTION_CONFIRMED,
                         LC_TRACE_PHASE_PREDICTION, t, event.index, UINT32_MAX,
@@ -9121,6 +9227,7 @@ void lc_mixed_run_destroy(lc_mixed_run *run) {
     free(run->t_last);
     free(run->active_nodes);
     free(run->active_parameters);
+    lc_runtime_clear_caches(run->runtime, graph == NULL ? 0U : graph->node_count);
     free(run->runtime);
     free(run->learning_observers);
     free(run->state_deposits);

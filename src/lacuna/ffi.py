@@ -820,6 +820,7 @@ class TraceKind(IntEnum):
     REFRACTORY_ENTER = 9
     FINAL_STATE = 10
     MODULATION = 11
+    NUMERICAL_CONTINUATION = 12
 
 
 class TracePhase(IntEnum):
@@ -1583,7 +1584,7 @@ class CoreEvaluator:
             ctypes.c_uint32,
         ]
         self._lib.lc_expr_state_deposit.restype = ctypes.c_int
-        self._lib.lc_expr_step_advance.argtypes = [
+        step_advance_types = [
             ctypes.POINTER(self._types._CExprNode),
             ctypes.c_uint32,
             ctypes.POINTER(self._types.real_type),
@@ -1602,7 +1603,14 @@ class CoreEvaluator:
             ctypes.c_uint32,
             ctypes.POINTER(self._types._CStepResult),
         ]
+        self._lib.lc_expr_step_advance.argtypes = step_advance_types
         self._lib.lc_expr_step_advance.restype = ctypes.c_int
+        for name in ("lc_expr_step_replay", "lc_expr_step_replay_v2"):
+            if hasattr(self._lib, name):
+                function = getattr(self._lib, name)
+                function.argtypes = step_advance_types + [
+                    self._types.real_argument, self._types.time_argument]
+                function.restype = ctypes.c_int
         self._lib.lc_expr_step_predict.argtypes = [
             ctypes.POINTER(self._types._CExprNode),
             ctypes.c_uint32,
@@ -2855,8 +2863,16 @@ class CoreEvaluator:
         *,
         clamped: bool = False,
         parameter_bindings: Mapping[str, float] | None = None,
+        prediction_horizon: float | None = None,
+        prediction_reuse: bool = True,
     ) -> tuple[AugmentedState, StepDiagnostics]:
-        """Advance one generic ODE node through the allocation-free C stepper."""
+        """Advance an ODE node, or replay bounded dense output for a trace query.
+
+        ``prediction_horizon`` selects network-trajectory replay and must be the
+        original simulation end. Omit it for the ordinary direct integrator.
+        ``prediction_reuse=False`` selects the original bounded-v1 restart policy;
+        the default selects bounded-v2 adaptive-step and derivative reuse.
+        """
 
         if not isinstance(model, ResolvedSteppedNeuron):
             raise TypeError("model must be a resolved stepped neuron")
@@ -2879,7 +2895,15 @@ class CoreEvaluator:
         workspace = (self._types.real_array(len(dag.nodes)))()
         result = self._types._CStepResult()
         config = self._step_config(model)
-        status = self._lib.lc_expr_step_advance(
+        function = self._lib.lc_expr_step_advance
+        replay_args = ()
+        if prediction_horizon is not None:
+            name = "lc_expr_step_replay_v2" if prediction_reuse else "lc_expr_step_replay"
+            if not hasattr(self._lib, name):
+                raise ValueError("native library does not support bounded numerical replay")
+            function = getattr(self._lib, name)
+            replay_args = (model.threshold, float(prediction_horizon))
+        status = function(
             node_array,
             len(dag.nodes),
             parameter_array,
@@ -2897,6 +2921,7 @@ class CoreEvaluator:
             workspace,
             len(workspace),
             ctypes.byref(result),
+            *replay_args,
         )
         if status != _LC_OK:
             self._raise(status)
@@ -4141,6 +4166,8 @@ class CoreEvaluator:
             4: "AUTONOMOUS_SPIKE",
             5: "OUTPUT_SPIKE",
             6: "DECODER_EVENT",
+            7: "MODULATION",
+            9: "NUMERICAL_CONTINUATION",
         }
         event_phases = {
             0: "BOUNDARY",

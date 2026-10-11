@@ -117,6 +117,11 @@ if(BUILD_TESTING)
         lacuna_numeric_type_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG
     )
     add_test(NAME lacuna_numeric_type_tests COMMAND lacuna_numeric_type_tests)
+    add_executable(lacuna_step_plan_tests tests/c/test_step_plan.c)
+    target_link_libraries(lacuna_step_plan_tests PRIVATE lacuna_core)
+    target_compile_options(lacuna_step_plan_tests PRIVATE
+        -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+    add_test(NAME lacuna_step_plan_tests COMMAND lacuna_step_plan_tests)
     endif()
 
     if(NOT LACUNA_REAL_BITS STREQUAL "16")

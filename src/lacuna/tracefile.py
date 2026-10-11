@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Iterator, Mapping, Sequence
 
 from .ffi import RecordingConfig, TraceKind, TracePhase, TraceRecord
-from .ir import ResolvedScalarLIF
+from .ir import ResolvedScalarLIF, ResolvedSteppedNeuron
 from .precision import PrecisionProfile
 
 if TYPE_CHECKING:
@@ -164,6 +164,10 @@ class TraceArtifactMetadata:
             raise ValueError("trace artifact extra metadata must be a mapping")
         if "lacuna_precision" in self.extra:
             PrecisionProfile.from_record(self.extra["lacuna_precision"])
+        if self.extra.get("lacuna_numerical_execution", "legacy") not in (
+            "legacy", "bounded_dense_v1", "bounded_dense_v2"
+        ):
+            raise ValueError("unknown numerical execution policy in trace metadata")
         _canonical_json(dict(self.extra))
 
     @property
@@ -189,6 +193,10 @@ class TraceArtifactMetadata:
         """Build identity and state metadata for a resolved graph trace."""
 
         provenance = {} if extra is None else dict(extra)
+        if resolved.precision is PrecisionProfile.FLOAT64 and any(
+            isinstance(model, ResolvedSteppedNeuron) for model in resolved.models
+        ):
+            provenance.setdefault("lacuna_numerical_execution", "bounded_dense_v2")
         if "lacuna_precision" in provenance:
             profile = PrecisionProfile.from_record(provenance["lacuna_precision"])
             if profile is not resolved.precision:
